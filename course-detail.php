@@ -3,23 +3,27 @@ $pageTitle = "Course Details";
 require_once 'includes/config.php';
 require_once 'includes/auth.php';
 
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
 if (!isset($_GET['id'])) {
     redirect('courses.php');
 }
 
-$courseId = $_GET['id'];
+$courseId = (int) $_GET['id'];
 global $pdo;
 
 // Get course details
 $stmt = $pdo->prepare("
     SELECT 
-        c.*, 
-        u.first_name, 
-        u.last_name, 
-        u.bio AS instructor_bio, 
-        u.profile_picture 
-    FROM courses c 
-    JOIN users u ON c.instructor_id = u.id 
+        c.*,
+        i.first_name,
+        i.last_name,
+        i.bio AS instructor_bio,
+        i.profile_picture
+    FROM courses c
+    JOIN instructors i ON c.instructor_id = i.id
     WHERE c.id = ?
 ");
 $stmt->execute([$courseId]);
@@ -31,10 +35,30 @@ if (!$course) {
 
 // Check if user is enrolled
 $isEnrolled = false;
+$currentLesson = null;
+$videoUrl = null;
+
 if (isLoggedIn()) {
     $stmt = $pdo->prepare("SELECT * FROM enrollments WHERE user_id = ? AND course_id = ?");
     $stmt->execute([$_SESSION['user_id'], $courseId]);
     $isEnrolled = $stmt->fetch() ? true : false;
+
+    if ($isEnrolled) {
+        // Default current lesson = first lesson of this course
+        $stmt = $pdo->prepare("
+            SELECT l.*
+            FROM lessons l
+            JOIN course_modules cm ON l.module_id = cm.id
+            WHERE cm.course_id = ?
+            ORDER BY cm.sort_order, l.sort_order, l.id
+            LIMIT 1
+        ");
+        $stmt->execute([$courseId]);
+        $currentLesson = $stmt->fetch();
+        if ($currentLesson && !empty($currentLesson['video_path'])) {
+            $videoUrl = $currentLesson['video_path'];
+        }
+    }
 }
 
 // Get modules and lessons
@@ -48,10 +72,71 @@ $modulesStmt = $pdo->prepare("
 $modulesStmt->execute([$courseId]);
 $modules = $modulesStmt->fetchAll();
 
-foreach ($modules as &$module) {
-    $lessonsStmt = $pdo->prepare("SELECT * FROM lessons WHERE module_id = ? ORDER BY sort_order");
+foreach ($modules as $index => $module) {
+    $lessonsStmt = $pdo->prepare("
+        SELECT * FROM lessons 
+        WHERE module_id = ? 
+        ORDER BY sort_order, id
+    ");
     $lessonsStmt->execute([$module['id']]);
-    $module['lessons'] = $lessonsStmt->fetchAll();
+    $modules[$index]['lessons'] = $lessonsStmt->fetchAll();
+}
+
+// Add materials to each lesson
+foreach ($modules as $index => $module) {
+    foreach ($module['lessons'] as $lessonIndex => $lesson) {
+        $matStmt = $pdo->prepare("SELECT * FROM lesson_materials WHERE lesson_id = ? ORDER BY id DESC");
+        $matStmt->execute([$lesson['id']]);
+        $modules[$index]['lessons'][$lessonIndex]['materials'] = $matStmt->fetchAll();
+    }
+}
+
+// Course progress + per-lesson progress
+$courseProgress = 0;
+$lessonProgressMap = [];
+
+if (isLoggedIn()) {
+    // Total lessons in this course
+    $totalLessonsStmt = $pdo->prepare("
+        SELECT COUNT(*) 
+        FROM lessons l
+        JOIN course_modules cm ON l.module_id = cm.id
+        WHERE cm.course_id = ?
+    ");
+    $totalLessonsStmt->execute([$courseId]);
+    $totalLessons = (int) $totalLessonsStmt->fetchColumn();
+
+    // Per-lesson progress for this user in this course
+    $progressStmt = $pdo->prepare("
+        SELECT up.lesson_id, up.completed, up.watched_percent
+        FROM user_progress up
+        JOIN lessons l ON up.lesson_id = l.id
+        JOIN course_modules cm ON l.module_id = cm.id
+        WHERE up.user_id = ?
+          AND cm.course_id = ?
+    ");
+    $progressStmt->execute([$_SESSION['user_id'], $courseId]);
+    while ($row = $progressStmt->fetch(PDO::FETCH_ASSOC)) {
+        $lessonProgressMap[$row['lesson_id']] = $row;
+    }
+
+    $completedLessons = 0;
+    $completedLessonIds = [];
+
+    foreach ($lessonProgressMap as $lessonId => $lp) {
+        if ((int) $lp['completed'] === 1) {
+            $completedLessons++;
+            $completedLessonIds[] = (int) $lessonId;
+        }
+    }
+
+    if ($totalLessons > 0) {
+        $courseProgress = (int) round($completedLessons * 100 / $totalLessons);
+        $courseCompleted = ($courseProgress === 100); // <-- add this
+    } else {
+        $courseCompleted = false;
+    }
+
 }
 
 // Handle enrollment
@@ -68,167 +153,517 @@ if (isLoggedIn() && !$isEnrolled && isset($_POST['enroll'])) {
 include 'includes/header.php';
 ?>
 
+<head>
+    <link href="https://vjs.zencdn.net/8.10.0/video-js.css" rel="stylesheet" />
+    <script src="https://vjs.zencdn.net/8.10.0/video.min.js"></script>
+</head>
+
 <style>
-    /* ===== Udemy-Inspired Course Details ===== */
+    :root {
+        --primary-start: #0f62ff;
+        --primary-end: #2d9eff;
+        --primary-deep: #0043ce;
+        --accent: #ffb545;
+        --bg-page: #f3f6ff;
+        --text-main: #0f172a;
+        --text-muted: #64748b;
+        --border-soft: rgba(148, 163, 184, 0.25);
+        --shadow-soft: 0 18px 45px rgba(15, 23, 42, 0.16);
+        --radius-lg: 16px;
+        --radius-md: 12px;
+    }
+
+    body {
+        background: radial-gradient(circle at top left, #e0ebff 0, #f3f6ff 40%, #f9fafb 100%);
+        font-family: 'Poppins', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        color: var(--text-main);
+    }
+
     .course-hero {
-        position: relative;
-        background: linear-gradient(135deg, #401b9c, #5624d0);
-        color: white;
-        padding: 3rem 1rem;
-        border-radius: 12px;
+        background: linear-gradient(90deg, var(--primary-start), var(--primary-end));
+        color: #fff;
+        border-radius: var(--radius-lg);
+        padding: 1.6rem 1.8rem;
+        box-shadow: var(--shadow-soft);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        display: flex;
+        align-items: center;
     }
 
     .course-hero h1 {
         font-weight: 700;
-        font-size: 2rem;
+        font-size: 1.9rem;
+        letter-spacing: 0.02em;
+        margin-bottom: .35rem;
     }
 
     .course-hero p {
-        color: #ddd;
+        color: #e5edff;
+        margin-bottom: 0.4rem;
+    }
+
+    .course-meta span {
+        background: rgba(15, 23, 42, 0.25);
+        border-radius: 999px;
+        padding: 6px 14px;
+        font-size: 0.85rem;
+        margin-right: 8px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
     }
 
     .course-meta i {
-        color: #cfc9ff;
-        margin-right: 5px;
+        font-size: 0.85rem;
+    }
+
+    .course-hero-thumbnail {
+        border-radius: var(--radius-md);
+        overflow: hidden;
+        border: 1px solid rgba(255, 255, 255, 0.55);
+        box-shadow: 0 14px 35px rgba(15, 23, 42, 0.35);
     }
 
     .card {
+        border-radius: var(--radius-md);
+        background: rgba(255, 255, 255, 0.96);
+        border: 1px solid var(--border-soft);
+        box-shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
+        backdrop-filter: blur(12px);
+        transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+    }
+
+    .card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 22px 55px rgba(15, 23, 42, 0.12);
+        border-color: rgba(37, 99, 235, 0.35);
+    }
+
+    .card-header {
+        background: linear-gradient(90deg, rgba(15, 23, 42, 0.02), rgba(148, 163, 184, 0.09));
+        border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+        border-radius: var(--radius-md) var(--radius-md) 0 0 !important;
+        font-weight: 600;
+        padding: 0.9rem 1.2rem;
+        color: var(--text-main);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .card-header i {
+        color: #2563eb;
+    }
+
+    .card-body {
+        padding: 1.1rem 1.2rem 1.3rem;
+    }
+
+    .btn-primary {
+        background: linear-gradient(120deg, var(--primary-start), var(--primary-deep));
         border: none;
-        border-radius: 10px;
-        box-shadow: 0 3px 10px rgba(0, 0, 0, 0.05);
+        border-radius: 999px;
+        font-weight: 600;
+        padding: 0.7rem 1.4rem;
+        letter-spacing: 0.02em;
+        box-shadow: 0 12px 25px rgba(37, 99, 235, 0.35);
+        transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
+    }
+
+    .btn-primary:hover {
+        filter: brightness(1.05);
+        transform: translateY(-1px);
+        box-shadow: 0 16px 35px rgba(37, 99, 235, 0.45);
+    }
+
+    .btn-success {
+        background: linear-gradient(120deg, #16a34a, #15803d);
+        border: none;
+        border-radius: 999px;
+        font-weight: 600;
+        box-shadow: 0 10px 22px rgba(22, 163, 74, 0.35);
+    }
+
+    .btn-outline-primary {
+        border-radius: 999px;
+        border-width: 1.6px;
+        font-weight: 500;
     }
 
     .accordion-button {
         font-weight: 600;
+        color: #0f172a;
+        border-radius: 10px !important;
+        background: transparent;
+        padding: 0.75rem 1rem;
+    }
+
+    .accordion-button:not(.collapsed) {
+        background: linear-gradient(90deg, rgba(37, 99, 235, 0.10), rgba(37, 99, 235, 0.02));
+        color: #1d4ed8;
+        box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.18);
     }
 
     .accordion-button:focus {
         box-shadow: none;
     }
 
+    .accordion-body {
+        background: transparent;
+        padding-top: 0.75rem;
+    }
+
+    .badge.bg-secondary {
+        background-color: rgba(191, 219, 254, 0.85) !important;
+        color: #1e40af !important;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        padding: 0.25rem 0.65rem;
+    }
+
     .list-group-item {
         border: none;
-        border-bottom: 1px solid #eee;
+        border-bottom: 1px dashed rgba(148, 163, 184, 0.4);
+        cursor: pointer;
+        padding: 0.7rem 0.35rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: .75rem;
+        background: transparent;
+        border-radius: 8px;
+        transition: background-color .14s ease, transform .12s ease;
     }
 
-    .list-group-item:last-child {
-        border-bottom: none;
+    .list-group-item:hover {
+        background: rgba(239, 246, 255, 0.9);
+        transform: translateY(-1px);
     }
 
-    .list-group-item .btn {
-        font-size: 0.85rem;
+    .active-lesson {
+        background: linear-gradient(90deg, rgba(37, 99, 235, 0.12), rgba(191, 219, 254, 0.6));
+        border-left: 4px solid var(--primary-start);
+        font-weight: 600;
     }
 
-    .badge {
-        font-size: 0.8rem;
+    .list-group-item i {
+        color: #2563eb;
+        margin-right: .4rem;
     }
 
-    .instructor-section img {
-        border: 3px solid #eee;
+    .video-card .card-header {
+        border-bottom: 1px solid rgba(15, 23, 42, 0.16);
+    }
+
+    .video-player-container {
+        background: radial-gradient(circle at top, #020617 0, #020617 40%, #020617 100%);
+        border-radius: var(--radius-md);
+        overflow: hidden;
+        height: 420px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+        border: 1px solid rgba(15, 23, 42, 0.6);
+        box-shadow: 0 18px 50px rgba(15, 23, 42, 0.6);
+    }
+
+    .video-player {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        background-color: #000;
+    }
+
+    .locked-video {
+        color: var(--text-muted);
+        text-align: center;
+        padding: 2.3rem 1.2rem;
+        font-size: 0.95rem;
     }
 
     .sidebar {
         position: sticky;
-        top: 90px;
+        top: 88px;
+        border-radius: var(--radius-lg);
+        background: radial-gradient(circle at top, #0f172a 0, #020617 55%);
+        color: #e5e7eb;
+        box-shadow: var(--shadow-soft);
+        border: 1px solid rgba(148, 163, 184, 0.45);
+        padding: 1.4rem 1.4rem 1.6rem;
     }
 
-    .btn-primary {
-        background-color: #5624d0;
-        border: none;
+    .sidebar .course-includes li {
+        margin-bottom: 0.55rem;
+        font-size: 0.9rem;
+        color: #cbd5f5;
+        display: flex;
+        align-items: center;
+        gap: .5rem;
     }
 
-    .btn-primary:hover {
-        background-color: #401b9c;
+    .sidebar .course-includes i {
+        color: #60a5fa;
     }
 
-    .course-includes li {
-        margin-bottom: 0.5rem;
+    .price-tag {
+        background: rgba(15, 23, 42, 0.9);
+        color: #e5edff;
+        padding: 0.4rem 0.9rem;
+        border-radius: 999px;
+        display: inline-flex;
+        align-items: center;
+        gap: .35rem;
+        font-weight: 600;
+        font-size: 0.95rem;
+    }
+
+    .price-tag i {
+        color: var(--accent);
+    }
+
+    /* Instructor avatar */
+    .instructor-section img {
+        border: 3px solid #60a5fa;
+        border-radius: 999px;
+        width: 80px;
+        height: 80px;
+        object-fit: cover;
+        box-shadow: 0 10px 22px rgba(15, 23, 42, 0.35);
+        transition: transform .18s ease, box-shadow .18s ease;
+    }
+
+    .instructor-section img:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 16px 35px rgba(15, 23, 42, 0.48);
+    }
+
+    /* mini lesson bars */
+    .lesson-progress {
+        height: 3px;
+        border-radius: 999px;
+        background-color: rgba(148, 163, 184, 0.25);
+        overflow: hidden;
+        max-width: 180px;
+    }
+
+    .lesson-materials .badge {
+        font-size: 0.7rem;
+        padding: 0.25rem 0.4rem;
+    }
+
+    /* ADD height here */
+    .lesson-progress .progress-bar {
+        background-color: blue;
+        height: 3px;
+        /* <= important */
+        border-radius: 999px;
+    }
+
+    .preview-material:hover {
+        background-color: #0dcaf0 !important;
+        transform: scale(1.05);
+        box-shadow: 0 2px 8px rgba(13, 202, 240, 0.4);
+    }
+
+    .modal iframe {
+        border-radius: 0 0 12px 12px;
+    }
+
+    @media (max-width: 991.98px) {
+        .course-hero {
+            padding: 1.4rem 1.2rem;
+        }
+
+        .video-player-container {
+            height: 260px;
+        }
     }
 </style>
 
 <div class="container mt-4 mb-5">
 
     <?php if (isset($success)): ?>
-        <div class="alert alert-success"><?php echo $success; ?></div>
+        <div class="alert alert-success"><?= $success ?></div>
     <?php endif; ?>
     <?php if (isset($error)): ?>
-        <div class="alert alert-danger"><?php echo $error; ?></div>
+        <div class="alert alert-danger"><?= $error ?></div>
     <?php endif; ?>
 
-    <!-- ===== Course Hero Section ===== -->
+    <!-- HERO -->
     <div class="course-hero mb-4">
-        <div class="row align-items-center">
-            <div class="col-md-8">
-                <h1><?php echo htmlspecialchars($course['title']); ?></h1>
-                <p class="lead"><?php echo htmlspecialchars($course['description']); ?></p>
-                <div class="course-meta d-flex flex-wrap gap-3 mt-3">
-                    <span><i class="fas fa-signal"></i> <?php echo ucfirst($course['level']); ?></span>
-                    <span><i class="fas fa-clock"></i> <?php echo $course['duration']; ?> hours</span>
-                    <span><i class="fas fa-tag"></i> <?php echo htmlspecialchars($course['category']); ?></span>
+        <div class="row align-items-center w-100">
+            <div class="col-lg-8 col-md-7">
+                <h1><?= htmlspecialchars($course['title']); ?></h1>
+                <p class="lead mb-1"><?= htmlspecialchars($course['description']); ?></p>
+
+                <div class="course-meta mt-2">
+                    <span><i class="fas fa-signal"></i><?= ucfirst($course['level']); ?></span>
+                    <span><i class="fas fa-clock"></i><?= $course['duration']; ?> hours</span>
+                    <span><i class="fas fa-tag"></i><?= htmlspecialchars($course['category']); ?></span>
                 </div>
             </div>
-            <div class="col-md-4 text-center">
+            <div class="col-lg-4 col-md-5 text-md-end text-center mt-3 mt-md-0">
                 <?php if ($course['thumbnail']): ?>
-                    <img src="uploads/<?php echo htmlspecialchars($course['thumbnail']); ?>"
-                        class="rounded shadow-sm img-fluid" alt="Course Thumbnail"
-                        style="max-height: 250px; object-fit: cover;">
+                    <div class="course-hero-thumbnail d-inline-block">
+                        <img src="uploads/<?= htmlspecialchars($course['thumbnail']); ?>" class="img-fluid"
+                            alt="Course Thumbnail" style="max-height: 230px; object-fit: cover;">
+                    </div>
                 <?php else: ?>
-                    <div class="bg-white text-dark py-5 rounded">No Image</div>
+                    <div class="bg-white text-dark py-5 px-4 rounded">No Image</div>
                 <?php endif; ?>
             </div>
         </div>
     </div>
 
-    <!-- ===== Main Content ===== -->
-    <div class="row">
-        <!-- Left: Course Content + Instructor -->
-        <div class="col-md-8">
+    <!-- MAIN LAYOUT -->
+    <div class="row g-4">
 
-            <!-- Course Content -->
+        <!-- LEFT: VIDEO + CONTENT + INSTRUCTOR -->
+        <div class="col-lg-8">
+
+            <?php if ($isEnrolled): ?>
+                <!-- VIDEO PANEL -->
+                <div class="card video-card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-play-circle text-primary me-2"></i>
+                            <?= $currentLesson ? htmlspecialchars($currentLesson['title']) : 'Watch Lesson'; ?>
+                        </h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="video-player-container" id="videoContainer">
+                            <?php if ($videoUrl): ?>
+                                <video class="video-player" controls preload="metadata">
+                                    <source src="<?= htmlspecialchars($videoUrl); ?>" type="video/mp4">
+                                    Your browser does not support the video tag.
+                                </video>
+                            <?php else: ?>
+                                <div class="locked-video">Select a lesson from the course content below.</div>
+                            <?php endif; ?>
+                        </div>
+                        <div id="quizContainer" class="mt-4"></div>
+                    </div>
+                </div>
+            <?php endif; ?>
+
+            <!-- COURSE CONTENT -->
             <div class="card mb-4">
-                <div class="card-header bg-light">
-                    <h4 class="mb-0"><i class="fas fa-list-ul me-2"></i>Course Content</h4>
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="fas fa-list-ul text-primary me-2"></i>Course Content
+                    </h5>
                 </div>
                 <div class="card-body">
                     <?php if (empty($modules)): ?>
-                        <p class="text-muted">No content available yet.</p>
+                        <p class="text-muted">No lessons added yet.</p>
                     <?php else: ?>
                         <div class="accordion" id="courseAccordion">
                             <?php foreach ($modules as $index => $module): ?>
                                 <div class="accordion-item mb-2 border-0 shadow-sm">
-                                    <h2 class="accordion-header" id="heading<?php echo $module['id']; ?>">
-                                        <button class="accordion-button <?php echo $index > 0 ? 'collapsed' : ''; ?>"
-                                            type="button" data-bs-toggle="collapse"
-                                            data-bs-target="#collapse<?php echo $module['id']; ?>">
-                                            <?php echo htmlspecialchars($module['title']); ?>
-                                            <span class="badge bg-secondary ms-2"><?php echo $module['lesson_count']; ?>
-                                                lessons</span>
+                                    <h2 class="accordion-header" id="heading<?= $module['id']; ?>">
+                                        <button class="accordion-button <?= $index > 0 ? 'collapsed' : ''; ?>" type="button"
+                                            data-bs-toggle="collapse" data-bs-target="#collapse<?= $module['id']; ?>">
+                                            <?= htmlspecialchars($module['title']); ?>
+                                            <span class="badge bg-secondary ms-2">
+                                                <?= $module['lesson_count']; ?> lessons
+                                            </span>
                                         </button>
                                     </h2>
-                                    <div id="collapse<?php echo $module['id']; ?>"
-                                        class="accordion-collapse collapse <?php echo $index === 0 ? 'show' : ''; ?>"
+                                    <div id="collapse<?= $module['id']; ?>"
+                                        class="accordion-collapse collapse <?= $index === 0 ? 'show' : ''; ?>"
                                         data-bs-parent="#courseAccordion">
                                         <div class="accordion-body">
-                                            <p class="text-muted small"><?php echo htmlspecialchars($module['description']); ?>
-                                            </p>
-                                            <ul class="list-group">
+                                            <ul class="list-group list-group-flush">
                                                 <?php foreach ($module['lessons'] as $lesson): ?>
-                                                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                                                    <?php
+                                                    $path = trim($lesson['video_path'] ?? '');
+                                                    $hasVideo = $path !== '';
+                                                    $isCurrent = $currentLesson && $lesson['id'] == $currentLesson['id'];
+
+                                                    $info = $lessonProgressMap[$lesson['id']] ?? null;
+                                                    $isCompleted = $info && (int) $info['completed'] === 1;
+                                                    $percent = $info ? (int) $info['watched_percent'] : 0;
+
+                                                    // sequential locking
+                                                    $isLocked = false;
+                                                    if ($isEnrolled && $hasVideo) {
+                                                        $prevStmt = $pdo->prepare("
+            SELECT l2.id
+            FROM lessons l2
+            JOIN course_modules cm2 ON l2.module_id = cm2.id
+            WHERE cm2.course_id = :course_id
+              AND (cm2.sort_order < :mod_order
+                   OR (cm2.sort_order = :mod_order AND (l2.sort_order < :lesson_order OR (l2.sort_order = :lesson_order AND l2.id < :lesson_id))))
+            ORDER BY cm2.sort_order DESC, l2.sort_order DESC, l2.id DESC
+            LIMIT 1
+        ");
+                                                        $prevStmt->execute([
+                                                            ':course_id' => $courseId,
+                                                            ':mod_order' => $module['sort_order'],
+                                                            ':lesson_order' => $lesson['sort_order'],
+                                                            ':lesson_id' => $lesson['id']
+                                                        ]);
+                                                        $prevId = (int) $prevStmt->fetchColumn();
+                                                        if ($prevId !== 0 && !in_array($prevId, $completedLessonIds, true)) {
+                                                            $isLocked = true;
+                                                        }
+                                                    }
+                                                    ?>
+                                                    <li
+                                                        class="list-group-item <?= $isEnrolled && $isCurrent ? 'active-lesson' : ''; ?>">
                                                         <div>
-                                                            <i class="fas fa-play-circle text-primary me-2"></i>
-                                                            <?php echo htmlspecialchars($lesson['title']); ?>
+
+                                                            <?= htmlspecialchars($lesson['title']); ?>
                                                             <?php if ($lesson['duration'] > 0): ?>
-                                                                <small class="text-muted">(<?php echo $lesson['duration']; ?>
-                                                                    min)</small>
+                                                                <small class="text-muted">(<?= $lesson['duration']; ?> min)</small>
+                                                            <?php endif; ?>
+
+                                                            <?php if ($isEnrolled): ?>
+                                                                <div class="lesson-progress mt-1">
+                                                                    <div class="progress-bar" style="width: <?= $percent; ?>%;"></div>
+                                                                </div>
                                                             <?php endif; ?>
                                                         </div>
-                                                        <?php if ($isEnrolled): ?>
-                                                            <a href="#" class="btn btn-sm btn-outline-primary">Start</a>
+
+                                                        <?php if ($isEnrolled && !empty($lesson['materials'])): ?>
+                                                            <div class="lesson-materials mt-1 mb-2">
+                                                                <?php foreach ($lesson['materials'] as $mat): ?>
+                                                                    <a href="uploads/<?= htmlspecialchars($mat['file_path']); ?>"
+                                                                        target="_blank"
+                                                                        class="badge bg-info text-dark me-1 mb-1 text-decoration-none d-inline-flex align-items-center"
+                                                                        title="<?= htmlspecialchars($mat['original_name']); ?>">
+                                                                        <i class="fas fa-file-alt me-1"></i>
+                                                                        <?= htmlspecialchars(substr($mat['original_name'], 0, 15)); ?>
+                                                                    </a>
+                                                                <?php endforeach; ?>
+                                                            </div>
+                                                        <?php endif; ?>
+
+
+                                                        <?php if ($isEnrolled && $hasVideo): ?>
+                                                            <?php if ($isLocked): ?>
+                                                                <button class="btn btn-sm btn-outline-secondary" disabled>
+                                                                    <i class="fas fa-lock me-1"></i>Locked
+                                                                </button>
+                                                            <?php else: ?>
+                                                                <button
+                                                                    class="btn btn-sm <?= $isCompleted ? 'btn-success' : 'btn-outline-primary'; ?> load-lesson"
+                                                                    data-lesson-id="<?= $lesson['id']; ?>"
+                                                                    data-course-id="<?= $courseId; ?>"
+                                                                    data-video-url="uploads/<?= htmlspecialchars($path); ?>"
+                                                                    data-lesson-title="<?= htmlspecialchars($lesson['title']); ?>">
+                                                                    <?= $isCompleted ? 'Completed ✅' : 'Play'; ?>
+                                                                </button>
+                                                            <?php endif; ?>
                                                         <?php else: ?>
-                                                            <span class="badge bg-secondary">Locked</span>
+                                                            <span class="badge bg-secondary"><i
+                                                                    class="fas fa-lock me-1"></i>Locked</span>
                                                         <?php endif; ?>
                                                     </li>
+
                                                 <?php endforeach; ?>
+
                                             </ul>
                                         </div>
                                     </div>
@@ -239,72 +674,317 @@ include 'includes/header.php';
                 </div>
             </div>
 
-            <!-- Instructor Section -->
+            <!-- INSTRUCTOR -->
             <div class="card instructor-section">
-                <div class="card-header bg-light">
-                    <h4 class="mb-0"><i class="fas fa-chalkboard-teacher me-2"></i>About the Instructor
-                    </h4>
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="fas fa-chalkboard-teacher text-primary me-2"></i>About the Instructor
+                    </h5>
                 </div>
                 <div class="card-body d-flex align-items-center">
                     <div class="flex-shrink-0">
                         <?php if (!empty($course['profile_picture'])): ?>
-                            <img src="uploads/<?php echo htmlspecialchars($course['profile_picture']); ?>" alt="Instructor"
-                                class="rounded-circle me-3" style="width: 80px; height: 80px; object-fit: cover;">
+                            <img src="uploads/instructors/<?= htmlspecialchars($course['profile_picture']); ?>"
+                                alt="Instructor" class="me-3">
                         <?php else: ?>
                             <i class="fas fa-user-circle fa-4x text-primary me-3"></i>
                         <?php endif; ?>
                     </div>
                     <div class="flex-grow-1">
                         <h5 class="mb-1">
-                            <?php echo htmlspecialchars($course['first_name'] . ' ' . $course['last_name']); ?></h5>
-                        <p class="text-muted mb-0">
-                            <?php echo htmlspecialchars($course['instructor_bio'] ?: 'No bio available.'); ?></p>
+                            <?= htmlspecialchars($course['first_name'] . ' ' . $course['last_name']); ?>
+                        </h5>
+                        <p class="mb-0">
+                            <?= htmlspecialchars($course['instructor_bio'] ?: 'No bio available.'); ?>
+                        </p>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Right: Sidebar -->
-        <div class="col-md-4">
-            <div class="card sidebar p-3">
+        <!-- RIGHT: SIDEBAR -->
+        <div class="col-lg-4">
+            <div class="sidebar">
                 <div class="text-center mb-3">
                     <?php if ($course['price'] > 0): ?>
-                        <h3 class="text-success">$<?php echo number_format($course['price'], 2); ?></h3>
+                        <div class="price-tag">
+                            <i class="fas fa-crown"></i>
+                            ₹<?= number_format($course['price'], 2); ?>
+                        </div>
                     <?php else: ?>
-                        <h3 class="text-success">Free</h3>
+                        <div class="price-tag">
+                            <i class="fas fa-crown"></i>
+                            Free
+                        </div>
                     <?php endif; ?>
                 </div>
 
-                <div class="d-grid gap-2 mb-3">
+                <div class="d-grid mb-3">
                     <?php if ($isEnrolled): ?>
-                        <button class="btn btn-success" disabled><i class="fas fa-check-circle me-2"></i>Enrolled</button>
-                        <a href="#" class="btn btn-primary"><i class="fas fa-play me-2"></i>Continue Learning</a>
+                        <button class="btn btn-success mb-2" disabled>
+                            <i class="fas fa-check-circle me-2"></i>Enrolled
+                        </button>
                     <?php else: ?>
                         <?php if (isLoggedIn()): ?>
                             <form method="POST">
-                                <button type="submit" name="enroll" class="btn btn-primary w-100">
-                                    <?php echo $course['price'] > 0 ? 'Enroll Now' : 'Enroll for Free'; ?>
+                                <button type="submit" name="enroll" class="btn btn-primary w-100 mb-2">
+                                    <?= $course['price'] > 0 ? 'Enroll Now' : 'Enroll for Free'; ?>
                                 </button>
                             </form>
                         <?php else: ?>
-                            <a href="login.php" class="btn btn-primary w-100">Login to Enroll</a>
+                            <a href="login.php" class="btn btn-primary w-100 mb-2">Login to Enroll</a>
                         <?php endif; ?>
                     <?php endif; ?>
                 </div>
 
-                <hr>
+                <hr class="border-secondary border-opacity-25">
 
                 <h6 class="fw-bold mb-3">This course includes:</h6>
-                <ul class="list-unstyled course-includes text-muted">
-                    <li><i class="fas fa-list-ul text-primary me-2"></i> <?php echo count($modules); ?> modules</li>
-                    <li><i class="fas fa-clock text-primary me-2"></i> <?php echo $course['duration']; ?> hours total
-                    </li>
-                    <li><i class="fas fa-certificate text-primary me-2"></i> Certificate of completion</li>
-                    <li><i class="fas fa-infinity text-primary me-2"></i> Lifetime access</li>
+                <ul class="list-unstyled course-includes">
+                    <li><i class="fas fa-list-ul"></i><?= count($modules); ?> modules</li>
+                    <li><i class="fas fa-clock"></i><?= $course['duration']; ?> hours total</li>
+                    <li><i class="fas fa-certificate"></i>Certificate of completion</li>
+                    <li><i class="fas fa-infinity"></i>Lifetime access</li>
                 </ul>
+
+                <?php if (isLoggedIn() && $isEnrolled): ?>
+                    <hr class="border-secondary border-opacity-25">
+                    <h6 class="fw-bold mb-2">Your progress</h6>
+                    <div class="progress" style="height: 10px;">
+                        <div class="progress-bar bg-primary" role="progressbar" style="width: <?= $courseProgress; ?>%;"
+                            aria-valuenow="<?= $courseProgress; ?>" aria-valuemin="0" aria-valuemax="100">
+                            <?= $courseProgress; ?>%
+                        </div>
+                    </div>
+                <?php endif; ?>
+
+                <?php if ($isEnrolled && $courseCompleted): ?>
+                    <div class="d-grid mt-3">
+                        <a href="certificate.php?course_id=<?= $courseId; ?>" target="_blank" class="btn btn-success w-100">
+                            <i class="fas fa-certificate me-1"></i>Download Certificate
+                        </a>
+                    </div>
+                <?php endif; ?>
+
+
             </div>
         </div>
+
     </div>
 </div>
+
+<script>
+
+    // Disable right-click on videos (prevent save)
+    document.addEventListener('contextmenu', function (e) {
+        if (e.target.tagName === 'VIDEO') {
+            e.preventDefault();
+        }
+    });
+
+    document.addEventListener('DOMContentLoaded', function () {
+        document.querySelectorAll('.load-lesson').forEach(function (btn) {
+            btn.addEventListener('click', function (e) {
+                e.preventDefault();
+                const url = this.dataset.videoUrl;
+                const title = this.dataset.lessonTitle;
+                const lessonId = this.dataset.lessonId;
+                const courseId = this.dataset.courseId;
+
+                if (!url) return;
+
+                const container = document.getElementById('videoContainer');
+                const quizContainer = document.getElementById('quizContainer');
+
+                if (!container) return;
+
+                // Load video player dynamically
+                container.innerHTML = `
+                <video class="video-player" controls preload="metadata" controlsList="nodownload" id="activeVideo">
+                    <source src="${url}" type="video/mp4">
+                    Your browser does not support the video tag.
+                </video>
+            `;
+
+                // Remove active class from other lessons and highlight this one
+                document.querySelectorAll('.list-group-item').forEach(li => li.classList.remove('active-lesson'));
+                this.closest('.list-group-item').classList.add('active-lesson');
+
+                // Update video header title
+                const header = document.querySelector('.video-card .card-header h5');
+                if (header) {
+                    header.innerHTML = '<i class="fas fa-play-circle text-primary me-2"></i>' + title;
+                }
+
+                // === Fetch and display quiz for this lesson ===
+                if (quizContainer) {
+                    quizContainer.innerHTML = "<div class='text-center py-3 text-muted'>Loading quiz...</div>";
+
+                    fetch('fetch_quiz.php', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: `lesson_id=${encodeURIComponent(lessonId)}`
+                    })
+                        .then(res => res.text())
+                        .then(html => {
+                            quizContainer.innerHTML = html;
+
+                            // Attach the quiz submit handler AFTER the quiz is loaded
+                            const submitBtn = quizContainer.querySelector('#submitQuiz');
+                            if (submitBtn) {
+                                submitBtn.addEventListener('click', function () {
+                                    const form = quizContainer.querySelector('#quizForm');
+                                    if (!form) return;
+                                    const formData = new FormData(form);
+                                    formData.append('lesson_id', lessonId);
+
+                                    fetch('submit_quiz.php', {
+                                        method: 'POST',
+                                        body: formData
+                                    })
+                                        .then(res => res.json())
+                                        .then(data => {
+                                            const resultDiv = quizContainer.querySelector('#quizResult');
+                                            if (data.status === 'passed') {
+                                                quizContainer.innerHTML = `
+            <div class='alert alert-success text-center mb-0'>
+                ✅ You passed this quiz! Score: ${data.score}% (${data.correct}/${data.total})
+            </div>
+        `;
+                                                // Update course progress bar
+                                                const bar = document.querySelector('.sidebar .progress-bar');
+                                                if (bar && typeof data.course_progress !== 'undefined') {
+                                                    bar.style.width = data.course_progress + '%';
+                                                    bar.setAttribute('aria-valuenow', data.course_progress);
+                                                    bar.textContent = data.course_progress + '%';
+                                                    bar.style.boxShadow = '0 0 10px #22c55e';
+                                                    setTimeout(() => bar.style.boxShadow = 'none', 800);
+                                                }
+                                            } else if (data.status === 'failed') {
+                                                resultDiv.innerHTML = `
+            <div class='alert alert-warning text-center'>
+                ❌ You scored ${data.score}% (${data.correct}/${data.total}). Try again to pass.
+            </div>
+        `;
+                                            } else {
+                                                resultDiv.innerHTML = `<div class='alert alert-danger text-center'>${data.message || 'Error'}</div>`;
+                                            }
+                                        })
+                                        .catch(err => {
+                                            quizContainer.querySelector('#quizResult').innerHTML = "<div class='text-danger'>Error submitting quiz.</div>";
+                                            console.error("Quiz error:", err);
+                                        });
+
+                                });
+                            }
+                        })
+                        .catch(() => {
+                            quizContainer.innerHTML = "<div class='text-danger'>Failed to load quiz.</div>";
+                        });
+
+                }
+
+                // === VIDEO PROGRESS TRACKING ===
+                const video = document.getElementById('activeVideo');
+                if (!video) return;
+
+                const button = this;
+                let watchedTime = 0;
+                let lastTime = 0;
+                let maxWatched = 0;
+                let lastSentPercent = -1;
+                const MIN_DELTA = 5;
+                const MIN_WATCH_THRESHOLD = 0.9;
+                const SYNC_INTERVAL = 10000;
+                let lastSyncTime = 0;
+
+                // Prevent skipping ahead beyond max watched position
+                // video.addEventListener('seeking', () => {
+                //     if (video.currentTime > maxWatched + 5) {
+                //         video.currentTime = maxWatched;
+                //     }
+                // });
+
+                // Send progress to backend
+                function sendProgress(percent) {
+                    percent = Math.max(0, Math.min(100, percent));
+
+                    if (percent === lastSentPercent) return;
+                    if (percent < 100 && lastSentPercent >= 0 && (percent - lastSentPercent) < MIN_DELTA) return;
+                    lastSentPercent = percent;
+
+                    fetch('update_progress.php', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: `lesson_id=${encodeURIComponent(lessonId)}&course_id=${encodeURIComponent(courseId)}&percent=${encodeURIComponent(percent)}`
+                    })
+                        .then(res => res.json())
+                        .then(data => {
+                            if (data.status === 'success') {
+                                const bar = document.querySelector('.sidebar .progress-bar');
+                                if (bar && typeof data.course_progress !== 'undefined') {
+                                    bar.style.width = data.course_progress + '%';
+                                    bar.setAttribute('aria-valuenow', data.course_progress);
+                                    bar.textContent = data.course_progress + '%';
+                                    bar.style.boxShadow = '0 0 10px #22c55e';
+                                    setTimeout(() => bar.style.boxShadow = 'none', 800);
+                                }
+                            }
+                        });
+                }
+
+                // Track real watch time
+                video.addEventListener('timeupdate', () => {
+                    if (!video.duration) return;
+
+                    if (!video.seeking && video.currentTime > lastTime) {
+                        const diff = video.currentTime - lastTime;
+                        watchedTime += diff;
+                        maxWatched = Math.max(maxWatched, video.currentTime);
+                    }
+                    lastTime = video.currentTime;
+
+                    const percentWatched = Math.min((watchedTime / video.duration) * 100, 100);
+                    const rounded = Math.round(percentWatched);
+
+                    // Update small bar under lesson
+                    const mini = button.closest('.list-group-item').querySelector('.lesson-progress .progress-bar');
+                    if (mini) mini.style.width = rounded + '%';
+
+                    const now = Date.now();
+                    if (Math.abs(rounded - lastSentPercent) >= MIN_DELTA || now - lastSyncTime > SYNC_INTERVAL) {
+                        lastSyncTime = now;
+                        sendProgress(rounded);
+                    }
+
+                    // Mark complete when 90% watched
+                    if (percentWatched >= MIN_WATCH_THRESHOLD * 100 && !button.classList.contains('btn-success')) {
+                        button.innerHTML = 'Completed ✅';
+                        button.classList.remove('btn-outline-primary');
+                        button.classList.add('btn-success');
+
+                        // ✅ Unlock the next lesson dynamically
+                        const currentLi = button.closest('li');
+                        const nextLi = currentLi.nextElementSibling;
+                        if (nextLi) {
+                            const nextBtn = nextLi.querySelector('.load-lesson');
+                            if (nextBtn) {
+                                nextBtn.removeAttribute('disabled');
+                                nextBtn.classList.remove('btn-outline-secondary');
+                            }
+                        }
+                    }
+                });
+
+
+                // Final sync on video end
+                video.addEventListener('ended', () => {
+                    sendProgress(100);
+                });
+            });
+        });
+    });
+
+</script>
 
 <?php include 'includes/footer.php'; ?>

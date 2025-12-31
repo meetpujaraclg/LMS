@@ -15,15 +15,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
         }
         header("Location: enrollments.php");
         exit();
-    } elseif ($_GET['action'] == 'toggle_complete') {
-        $stmt = $admin_pdo->prepare("UPDATE enrollments SET completed = NOT completed, completed_at = IF(completed = 0, NOW(), NULL) WHERE id = ?");
-        if ($stmt->execute([$enrollmentId])) {
-            $_SESSION['success'] = "Enrollment status updated successfully!";
-        } else {
-            $_SESSION['error'] = "Failed to update enrollment status!";
-        }
-        header("Location: enrollments.php");
-        exit();
     }
 }
 
@@ -42,20 +33,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulk_action'])) {
             } else {
                 $_SESSION['error'] = "Failed to delete enrollments!";
             }
-        } elseif ($bulkAction == 'mark_completed') {
-            $stmt = $admin_pdo->prepare("UPDATE enrollments SET completed = 1, progress = 100, completed_at = NOW() WHERE id IN ($placeholders)");
-            if ($stmt->execute($enrollmentIds)) {
-                $_SESSION['success'] = count($enrollmentIds) . " enrollment(s) marked as completed!";
-            } else {
-                $_SESSION['error'] = "Failed to update enrollments!";
-            }
-        } elseif ($bulkAction == 'reset_progress') {
-            $stmt = $admin_pdo->prepare("UPDATE enrollments SET progress = 0, completed = 0, completed_at = NULL WHERE id IN ($placeholders)");
-            if ($stmt->execute($enrollmentIds)) {
-                $_SESSION['success'] = count($enrollmentIds) . " enrollment(s) progress reset!";
-            } else {
-                $_SESSION['error'] = "Failed to reset enrollments!";
-            }
         }
     }
     header("Location: enrollments.php");
@@ -69,7 +46,7 @@ unset($_SESSION['success'], $_SESSION['error']);
 
 // Pagination & filters
 $page = isset($_GET['page']) ? max(1, (int) $_GET['page']) : 1;
-$limit = 15;
+$limit = 8; // Reduced for card layout
 $offset = ($page - 1) * $limit;
 
 $search = isset($_GET['search']) ? admin_sanitize($_GET['search']) : '';
@@ -131,128 +108,372 @@ $enrollments = $stmt->fetchAll();
 $courses = $admin_pdo->query("SELECT id, title FROM courses ORDER BY title")->fetchAll();
 ?>
 
-<div class="d-flex justify-content-between align-items-center pt-3 pb-2 mb-3 border-bottom">
-    <h1 class="h2">Manage Enrollments</h1>
-</div>
+<style>
+    /* Blue Glassmorphism - Single Card Enrollments */
+    :root {
+        --primary-blue: #3b82f6;
+        --primary-blue-dark: #1e40af;
+        --glass-bg: rgba(255, 255, 255, 0.25);
+        --glass-border: rgba(255, 255, 255, 0.3);
+        --glass-shadow: 0 20px 40px rgba(59, 130, 246, 0.15);
+    }
 
-<?php if ($success): ?>
-    <div class="alert alert-success"><?= htmlspecialchars($success) ?></div>
-<?php elseif ($error): ?>
-    <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
-<?php endif; ?>
+    /* Page Background */
+    #content,
+    body {
+        background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+        min-height: 100vh;
+    }
 
-<!-- Filters -->
-<div class="card mb-4">
-    <div class="card-body">
-        <form method="GET" class="row g-3">
-            <div class="col-md-4">
-                <input type="text" name="search" class="form-control" placeholder="Search students or courses..."
-                    value="<?= htmlspecialchars($search) ?>">
-            </div>
-            <div class="col-md-3">
-                <select name="course" class="form-select">
-                    <option value="0">All Courses</option>
-                    <?php foreach ($courses as $course): ?>
-                        <option value="<?= $course['id'] ?>" <?= $course_filter == $course['id'] ? 'selected' : '' ?>>
-                            <?= htmlspecialchars($course['title']) ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-            <div class="col-md-2">
-                <select name="status" class="form-select">
-                    <option value="">All Status</option>
-                    <option value="completed" <?= $status_filter == 'completed' ? 'selected' : '' ?>>Completed</option>
-                    <option value="in_progress" <?= $status_filter == 'in_progress' ? 'selected' : '' ?>>In Progress
-                    </option>
-                    <option value="not_started" <?= $status_filter == 'not_started' ? 'selected' : '' ?>>Not Started
-                    </option>
-                </select>
-            </div>
-            <div class="col-md-2">
-                <button type="submit" class="btn btn-primary w-100">Filter</button>
-            </div>
-            <div class="col-md-1">
-                <a href="enrollments.php" class="btn btn-secondary w-100">Reset</a>
-            </div>
-        </form>
-    </div>
-</div>
+    /* Single Glass Card */
+    .enrollments-card {
+        background: var(--glass-bg);
+        backdrop-filter: blur(20px);
+        border-radius: 24px;
+        border: 1px solid var(--glass-border);
+        box-shadow: var(--glass-shadow);
+        padding: 2.5rem;
+        max-width: 1200px;
+        margin: 0 auto;
+        transition: all 0.3s ease;
+    }
 
-<!-- Enrollments Table -->
-<div class="card">
-    <div class="card-header d-flex justify-content-between align-items-center">
-        <h5 class="mb-0">Enrollments (<?= $totalEnrollments ?>)</h5>
-        <span class="badge bg-primary">Page <?= $page ?> of <?= $totalPages ?></span>
-    </div>
-    <div class="card-body">
-        <?php if (!empty($enrollments)): ?>
-            <form method="POST" id="bulkForm">
-                <div class="mb-3">
-                    <select name="bulk_action" class="form-select form-select-sm d-inline-block w-auto">
-                        <option value="">Bulk Actions</option>
-                        <option value="mark_completed">Mark Completed</option>
-                        <option value="reset_progress">Reset Progress</option>
-                        <option value="delete">Delete Selected</option>
-                    </select>
-                    <button type="submit" class="btn btn-sm btn-outline-primary">Apply</button>
+    .enrollments-card:hover {
+        box-shadow: 0 30px 60px rgba(59, 130, 246, 0.25);
+        transform: translateY(-5px);
+    }
+
+    /* Alerts */
+    .alert {
+        border: none;
+        border-radius: 16px;
+        backdrop-filter: blur(12px);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+        margin-bottom: 2rem;
+    }
+
+    /* Filters Form */
+    .filters-form {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 16px;
+        padding: 1.5rem;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        margin-bottom: 2rem;
+    }
+
+    /* Enrollment Item */
+    .enrollment-item {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 20px;
+        padding: 1.75rem;
+        margin-bottom: 1.5rem;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        transition: all 0.3s ease;
+        display: flex;
+        align-items: center;
+        gap: 1.5rem;
+    }
+
+    .enrollment-item:hover {
+        background: rgba(255, 255, 255, 0.2);
+        transform: translateY(-3px);
+        box-shadow: 0 12px 30px rgba(59, 130, 246, 0.15);
+    }
+
+    .student-avatar {
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        object-fit: cover;
+        border: 3px solid rgba(59, 130, 246, 0.3);
+        box-shadow: 0 6px 16px rgba(59, 130, 246, 0.2);
+    }
+
+    .enrollment-info {
+        flex: 1;
+    }
+
+    .student-name {
+        color: var(--primary-blue);
+        font-weight: 700;
+        font-size: 1.2rem;
+        margin-bottom: 0.25rem;
+    }
+
+    .course-title {
+        font-weight: 600;
+        color: #1e293b;
+        margin-bottom: 0.5rem;
+    }
+
+    .enrollment-details {
+        display: flex;
+        gap: 1.5rem;
+        margin-bottom: 1rem;
+        flex-wrap: wrap;
+    }
+
+    .detail-item {
+        background: rgba(59, 130, 246, 0.1);
+        padding: 0.5rem 1rem;
+        border-radius: 12px;
+        border: 1px solid rgba(59, 130, 246, 0.2);
+    }
+
+    .detail-label {
+        font-size: 0.8rem;
+        color: #64748b;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .detail-value {
+        font-weight: 600;
+        color: #1e293b;
+        font-size: 0.9rem;
+    }
+
+    .status-badge {
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
+        font-weight: 600;
+        text-transform: uppercase;
+        font-size: 0.8rem;
+        letter-spacing: 0.5px;
+    }
+
+    .status-completed {
+        background: linear-gradient(135deg, #10b981, #059669);
+        color: white;
+    }
+
+    .status-progress {
+        background: linear-gradient(135deg, var(--primary-blue), var(--primary-blue-dark));
+        color: white;
+    }
+
+    /* Bulk Actions */
+    .bulk-actions {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        padding: 1rem;
+        margin-bottom: 1.5rem;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    /* Action Buttons */
+    .action-buttons {
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    .btn {
+        border-radius: 12px;
+        border: none;
+        font-weight: 600;
+        padding: 0.5rem 1rem;
+        transition: all 0.3s ease;
+        backdrop-filter: blur(12px);
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.9rem;
+    }
+
+    /* Checkbox */
+    .enrollment-checkbox {
+        width: 20px;
+        height: 20px;
+        accent-color: var(--primary-blue);
+    }
+
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: 4rem 2rem;
+        color: #64748b;
+    }
+
+    .empty-icon {
+        font-size: 5rem;
+        color: #cbd5e1;
+        margin-bottom: 1.5rem;
+    }
+
+    .empty-title {
+        font-size: 1.75rem;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+        color: #475569;
+    }
+
+    /* Pagination */
+    .pagination {
+        justify-content: center;
+        margin-top: 2rem;
+    }
+
+    .page-link {
+        border-radius: 10px;
+        margin: 0 0.25rem;
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        color: var(--primary-blue);
+    }
+
+    .page-item.active .page-link {
+        background: var(--primary-blue);
+        border-color: var(--primary-blue);
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+        .enrollments-card {
+            margin: 1rem;
+            padding: 2rem;
+        }
+
+        .enrollment-item {
+            flex-direction: column;
+            text-align: center;
+            gap: 1rem;
+        }
+
+        .enrollment-details {
+            justify-content: center;
+        }
+    }
+</style>
+
+<div class="container-fluid">
+    <div class="enrollments-card">
+
+        <?php if ($success): ?>
+            <div class="alert alert-success"><?= htmlspecialchars($success) ?></div>
+        <?php elseif ($error): ?>
+            <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
+        <?php endif; ?>
+
+        <!-- Filters -->
+        <div class="filters-form">
+            <form method="GET" class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">Search</label>
+                    <input type="text" name="search" class="form-control" placeholder="🔍 Search students or courses..."
+                        value="<?= htmlspecialchars($search) ?>">
                 </div>
-
-                <div class="table-responsive">
-                    <table class="table table-striped table-hover">
-                        <thead class="table-dark">
-                            <tr>
-                                <th width="30"><input type="checkbox" id="selectAll"></th>
-                                <th>Student</th>
-                                <th>Course</th>
-                                <th>Instructor</th>
-                                <th>Enrolled</th>
-                                <th>Status</th>
-                                <th width="100">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($enrollments as $e): ?>
-                                <tr>
-                                    <td><input type="checkbox" name="enrollment_ids[]" value="<?= $e['id'] ?>"
-                                            class="enrollment-checkbox"></td>
-                                    <td>
-                                        <strong><?= htmlspecialchars($e['first_name'] . ' ' . $e['last_name']) ?></strong><br>
-                                        <small class="text-muted"><?= htmlspecialchars($e['email']) ?></small>
-                                    </td>
-                                    <td><?= htmlspecialchars($e['course_title']) ?></td>
-                                    <td><?= $e['instructor_first_name'] ? htmlspecialchars($e['instructor_first_name'] . ' ' . $e['instructor_last_name']) : '<span class="text-muted">N/A</span>' ?>
-                                    </td>
-                                    <td><?= date('M j, Y', strtotime($e['enrolled_at'])) ?></td>
-                                    <td>
-                                        <?php if ($e['completed']): ?>
-                                            <span class="badge bg-success"><i class="fas fa-check"></i> Completed</span>
-                                        <?php else: ?>
-                                            <span class="badge bg-primary">In Progress</span>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td>
-                                        <div class="btn-group btn-group-sm">
-                                            <a href="enrollments.php?action=toggle_complete&id=<?= $e['id'] ?>"
-                                                class="btn btn-outline-success" title="Toggle Status">
-                                                <i class="fas fa-check-circle"></i>
-                                            </a>
-                                            <a href="enrollments.php?action=delete&id=<?= $e['id'] ?>"
-                                                class="btn btn-outline-danger" title="Delete"
-                                                onclick="return confirm('Delete this enrollment?')">
-                                                <i class="fas fa-trash"></i>
-                                            </a>
-                                        </div>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
+                <div class="col-md-3">
+                    <label class="form-label fw-bold">Course</label>
+                    <select name="course" class="form-select">
+                        <option value="0">All Courses</option>
+                        <?php foreach ($courses as $course): ?>
+                            <option value="<?= $course['id'] ?>" <?= $course_filter == $course['id'] ? 'selected' : '' ?>>
+                                <?= htmlspecialchars($course['title']) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-primary w-100">Filter</button>
+                </div>
+                <div class="col-md-1">
+                    <a href="enrollments.php" class="btn btn-outline-secondary w-100">Reset</a>
                 </div>
             </form>
+        </div>
+
+        <?php if (!empty($enrollments)): ?>
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5>Total: <?= $totalEnrollments ?> enrollments</h5>
+                <span class="badge bg-primary">Page <?= $page ?> of <?= $totalPages ?></span>
+            </div>
+
+            <form method="POST" id="bulkForm">
+                <div class="bulk-actions">
+                    <div class="row align-items-center">
+                        <div class="col-auto">
+                            <input type="checkbox" id="selectAll" class="me-2">
+                        </div>
+                        <div class="col">
+                            <select name="bulk_action" class="form-select form-select-sm d-inline-block w-auto">
+                                <option value="">Bulk Actions</option>
+                                <option value="delete">Delete Selected</option>
+                            </select>
+                            <button type="submit" class="btn btn-sm btn-outline-primary ms-2">Apply</button>
+                        </div>
+                    </div>
+                </div>
+
+                <?php foreach ($enrollments as $e): ?>
+                    <div class="enrollment-item">
+                        <input type="checkbox" name="enrollment_ids[]" value="<?= $e['id'] ?>" class="enrollment-checkbox me-3">
+
+                        <img src="../<?= htmlspecialchars($e['profile_picture'] ?? 'default-avatar.png') ?>"
+                            class="student-avatar" onerror="this.src='../uploads/profile_pictures/default.png'"
+                            alt="<?= htmlspecialchars($e['first_name']) ?>">
+
+                        <div class="enrollment-info">
+                            <div class="student-name">
+                                <?= htmlspecialchars($e['first_name'] . ' ' . $e['last_name']) ?>
+                            </div>
+                            <div class="course-title"><?= htmlspecialchars($e['course_title']) ?></div>
+
+                            <div class="enrollment-details">
+                                <div class="detail-item">
+                                    <div class="detail-label">Email</div>
+                                    <div class="detail-value"><?= htmlspecialchars($e['email']) ?></div>
+                                </div>
+                                <div class="detail-item">
+                                    <div class="detail-label">Instructor</div>
+                                    <div class="detail-value">
+                                        <?= $e['instructor_first_name'] ? htmlspecialchars($e['instructor_first_name'] . ' ' . $e['instructor_last_name']) : 'N/A' ?>
+                                    </div>
+                                </div>
+                                <div class="detail-item">
+                                    <div class="detail-label">Enrolled</div>
+                                    <div class="detail-value"><?= date('M j, Y', strtotime($e['enrolled_at'])) ?></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="action-buttons">
+                            <a href="enrollments.php?action=delete&id=<?= $e['id'] ?>" class="btn btn-danger"
+                                title="Delete" onclick="return confirm('Delete this enrollment?')">
+                                <i class="fas fa-trash"></i>
+                            </a>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            </form>
+
+            <!-- Pagination -->
+            <?php if ($totalPages > 1): ?>
+                <nav aria-label="Page navigation">
+                    <ul class="pagination">
+                        <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>">
+                            <a class="page-link"
+                                href="?page=<?= $page - 1 ?>&search=<?= urlencode($search) ?>&course=<?= $course_filter ?>&status=<?= urlencode($status_filter) ?>">Previous</a>
+                        </li>
+                        <?php for ($i = 1; $i <= $totalPages; $i++): ?>
+                            <li class="page-item <?= $i == $page ? 'active' : '' ?>">
+                                <a class="page-link"
+                                    href="?page=<?= $i ?>&search=<?= urlencode($search) ?>&course=<?= $course_filter ?>&status=<?= urlencode($status_filter) ?>"><?= $i ?></a>
+                            </li>
+                        <?php endfor; ?>
+                        <li class="page-item <?= $page >= $totalPages ? 'disabled' : '' ?>">
+                            <a class="page-link"
+                                href="?page=<?= $page + 1 ?>&search=<?= urlencode($search) ?>&course=<?= $course_filter ?>&status=<?= urlencode($status_filter) ?>">Next</a>
+                        </li>
+                    </ul>
+                </nav>
+            <?php endif; ?>
 
         <?php else: ?>
-            <p class="text-center text-muted my-4">No enrollments found.</p>
+            <div class="empty-state">
+                <div class="empty-icon">📚</div>
+                <div class="empty-title">No enrollments found</div>
+                <p>No students have enrolled in any courses yet.</p>
+            </div>
         <?php endif; ?>
     </div>
 </div>

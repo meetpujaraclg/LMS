@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Dec 24, 2025 at 08:48 AM
+-- Generation Time: Nov 18, 2025 at 11:30 AM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.2.12
 
@@ -81,22 +81,15 @@ CREATE TABLE `courses` (
   `title` varchar(255) NOT NULL,
   `description` text DEFAULT NULL,
   `instructor_id` int(11) DEFAULT NULL,
-  `is_published` tinyint(1) NOT NULL DEFAULT 0,
   `category` varchar(100) DEFAULT NULL,
   `price` decimal(10,2) DEFAULT 0.00,
   `thumbnail` varchar(255) DEFAULT NULL,
   `duration` int(11) DEFAULT 0,
   `level` enum('beginner','intermediate','advanced') DEFAULT 'beginner',
+  `is_published` tinyint(1) DEFAULT 0,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
---
--- Dumping data for table `courses`
---
-
-INSERT INTO `courses` (`id`, `title`, `description`, `instructor_id`, `is_published`, `category`, `price`, `thumbnail`, `duration`, `level`, `created_at`, `updated_at`) VALUES
-(23, 'Cooking champ', 'This is the only cooking course you need!', 4, 0, 'Cook', 800.00, 'courses/694b56b066c38.jpg', 2, 'advanced', '2025-12-24 02:57:52', '2025-12-24 05:40:03');
 
 -- --------------------------------------------------------
 
@@ -135,14 +128,6 @@ CREATE TABLE `course_modules` (
   `created_at` timestamp NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
---
--- Dumping data for table `course_modules`
---
-
-INSERT INTO `course_modules` (`id`, `course_id`, `title`, `description`, `sort_order`, `created_at`) VALUES
-(1, 23, 'Introduction', 'This is the intro of kitchen tools', 1, '2025-12-24 02:58:25'),
-(4, 23, 'New recipies', 'In this module, you&#039;ll learn to cook new recipies', 2, '2025-12-24 07:33:27');
-
 -- --------------------------------------------------------
 
 --
@@ -160,13 +145,6 @@ CREATE TABLE `enrollments` (
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   `updated_at` timestamp NULL DEFAULT NULL ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
---
--- Dumping data for table `enrollments`
---
-
-INSERT INTO `enrollments` (`id`, `user_id`, `course_id`, `enrolled_at`, `completed_at`, `progress`, `completed`, `created_at`, `updated_at`) VALUES
-(14, 25, 23, '2025-12-24 05:44:21', NULL, 0, 0, '2025-12-24 05:44:21', NULL);
 
 -- --------------------------------------------------------
 
@@ -198,7 +176,7 @@ CREATE TABLE `instructors` (
 --
 
 INSERT INTO `instructors` (`id`, `first_name`, `last_name`, `email`, `password`, `profile_picture`, `bio`, `id_proof`, `qualification`, `experience`, `expertise_area`, `profile_status`, `verified`, `email_verified`, `created_at`, `updated_at`) VALUES
-(4, 'Meet', 'Pujara', 'meet.pujara123382@marwadiuniversity.ac.in', '$2y$10$5KW2ghNrDnu1WQVaxVDMxe0Lqf8uqzV5iiWWC.i9VkNYK0FULTfOm', '16d74f6197620023be1780a0_1763202040.jpg', 'Hey', 'fcacc99942b5d1e588a2064f_1763202040.pdf', '2743d6cb39da9f5925d1f861_1763202040.pdf', '5', 'Web development', 'active', 'yes', 1, '2025-11-15 10:21:07', '2025-12-23 08:42:51');
+(4, 'Meet', 'Pujara', 'meet.pujara123382@marwadiuniversity.ac.in', '$2y$10$MD43oJkO3IxMrQvswFOim.nWe2rQROrn1bF.YPJCBsb7UZlPO8P0W', '16d74f6197620023be1780a0_1763202040.jpg', 'Hey', 'fcacc99942b5d1e588a2064f_1763202040.pdf', '2743d6cb39da9f5925d1f861_1763202040.pdf', '5', 'Web development', 'active', 'yes', 1, '2025-11-15 10:21:07', '2025-11-17 11:21:00');
 
 -- --------------------------------------------------------
 
@@ -213,36 +191,8 @@ CREATE TABLE `lessons` (
   `content` text DEFAULT NULL,
   `video_url` varchar(255) DEFAULT NULL,
   `duration` int(11) DEFAULT 0,
-  `video_path` varchar(255) DEFAULT NULL,
   `sort_order` int(11) DEFAULT 0,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
---
--- Dumping data for table `lessons`
---
-
-INSERT INTO `lessons` (`id`, `module_id`, `title`, `content`, `video_url`, `duration`, `video_path`, `sort_order`, `created_at`) VALUES
-(1, 1, 'Kitchen tools', 'Hey', '', 21, 'videos/lesson_694b6d2eacc897.62209447.mp4', 0, '2025-12-24 04:33:50'),
-(2, 1, 'Second', '2nd video', '', 21, 'videos/lesson_694b797fa0a9e7.16774323.mp4', 0, '2025-12-24 05:26:23'),
-(3, 1, 'Third', '3rd video', '', 21, 'videos/lesson_694b79a3d07922.32287399.mp4', 0, '2025-12-24 05:27:00'),
-(4, 1, 'Forth video', '4th video', '', 21, 'videos/lesson_694b79fb295836.12825822.mp4', 0, '2025-12-24 05:28:27'),
-(5, 1, 'Fifth video', '5th video', '', 21, 'videos/lesson_694b7a1fe18d01.03484145.mp4', 0, '2025-12-24 05:29:04'),
-(6, 1, 'Sixth Video', '6th video', '', 21, 'videos/lesson_694b7b0190d123.20060163.mp4', 0, '2025-12-24 05:32:49'),
-(12, 4, 'Pizza 😋', 'In this lesson, you\'ll learn about making pizza 😀', '', 0, 'videos/lesson_694b9776a4c5c1.50350931.mp4', 0, '2025-12-24 07:34:15');
-
--- --------------------------------------------------------
-
---
--- Table structure for table `progress`
---
-
-CREATE TABLE `progress` (
-  `id` int(11) NOT NULL,
-  `user_id` int(11) DEFAULT NULL,
-  `lesson_id` int(11) DEFAULT NULL,
-  `completed` tinyint(1) DEFAULT 0,
-  `completed_at` timestamp NULL DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -328,7 +278,7 @@ CREATE TABLE `users` (
 --
 
 INSERT INTO `users` (`id`, `email`, `password`, `first_name`, `last_name`, `profile_picture`, `bio`, `created_at`, `updated_at`) VALUES
-(25, 'meet.thakkar@zohomail.in', '$2y$10$2nCNkD7edylhPrQT1to9EO01RysPWNNYJpHNIWJ59QhNjbKaHg8WG', 'Meet', 'Thakkar', 'uploads/profile_pictures/1763461156_ProfilePhoto.jpg', 'Hey', '2025-11-18 10:19:56', '2025-12-04 07:11:21');
+(25, 'meet.thakkar@zohomail.in', '$2y$10$2nCNkD7edylhPrQT1to9EO01RysPWNNYJpHNIWJ59QhNjbKaHg8WG', 'Meet', 'Thakkar', 'uploads/profile_pictures/1763461156_ProfilePhoto.jpg', NULL, '2025-11-18 10:19:56', '2025-11-18 10:19:56');
 
 -- --------------------------------------------------------
 
@@ -407,14 +357,6 @@ ALTER TABLE `lessons`
   ADD KEY `module_id` (`module_id`);
 
 --
--- Indexes for table `progress`
---
-ALTER TABLE `progress`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `user_id` (`user_id`),
-  ADD KEY `lesson_id` (`lesson_id`);
-
---
 -- Indexes for table `student_material_progress`
 --
 ALTER TABLE `student_material_progress`
@@ -465,7 +407,7 @@ ALTER TABLE `categories`
 -- AUTO_INCREMENT for table `courses`
 --
 ALTER TABLE `courses`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=24;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=11;
 
 --
 -- AUTO_INCREMENT for table `course_materials`
@@ -477,13 +419,13 @@ ALTER TABLE `course_materials`
 -- AUTO_INCREMENT for table `course_modules`
 --
 ALTER TABLE `course_modules`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `enrollments`
 --
 ALTER TABLE `enrollments`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=15;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=14;
 
 --
 -- AUTO_INCREMENT for table `instructors`
@@ -495,12 +437,6 @@ ALTER TABLE `instructors`
 -- AUTO_INCREMENT for table `lessons`
 --
 ALTER TABLE `lessons`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=13;
-
---
--- AUTO_INCREMENT for table `progress`
---
-ALTER TABLE `progress`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
@@ -535,7 +471,7 @@ ALTER TABLE `user_progress`
 -- Constraints for table `courses`
 --
 ALTER TABLE `courses`
-  ADD CONSTRAINT `courses_ibfk_1` FOREIGN KEY (`instructor_id`) REFERENCES `instructors` (`id`) ON DELETE SET NULL;
+  ADD CONSTRAINT `courses_ibfk_1` FOREIGN KEY (`instructor_id`) REFERENCES `users` (`id`) ON DELETE SET NULL;
 
 --
 -- Constraints for table `course_materials`
@@ -562,13 +498,6 @@ ALTER TABLE `enrollments`
 --
 ALTER TABLE `lessons`
   ADD CONSTRAINT `lessons_ibfk_1` FOREIGN KEY (`module_id`) REFERENCES `course_modules` (`id`) ON DELETE CASCADE;
-
---
--- Constraints for table `progress`
---
-ALTER TABLE `progress`
-  ADD CONSTRAINT `progress_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`),
-  ADD CONSTRAINT `progress_ibfk_2` FOREIGN KEY (`lesson_id`) REFERENCES `lessons` (`id`);
 
 --
 -- Constraints for table `student_material_progress`

@@ -1,0 +1,7 @@
+[30-Dec-2025 03:41:55 Europe/Berlin] PHP Warning:  require_once(includes/config.php): Failed to open stream: No such file or directory in E:\Xampp\htdocs\instructor\generate_auto_quiz.php on line 14
+[30-Dec-2025 04:39:16 Europe/Berlin] PHP Fatal error:  Maximum execution time of 120 seconds exceeded in E:\Xampp\htdocs\instructor\generate_auto_quiz.php on line 60
+[30-Dec-2025 05:28:12 Europe/Berlin] PHP Warning:  Undefined variable $letters in E:\Xampp\htdocs\instructor\generate_auto_quiz.php on line 129
+[30-Dec-2025 05:28:12 Europe/Berlin] PHP Warning:  Trying to access array offset on value of type null in E:\Xampp\htdocs\instructor\generate_auto_quiz.php on line 129
+[30-Dec-2025 05:30:26 Europe/Berlin] PHP Warning:  Undefined variable $letters in E:\Xampp\htdocs\instructor\generate_auto_quiz.php on line 129
+[30-Dec-2025 05:30:26 Europe/Berlin] PHP Warning:  Trying to access array offset on value of type null in E:\Xampp\htdocs\instructor\generate_auto_quiz.php on line 129
+[30-Dec-2025 05:46:24 Europe/Berlin] PHP Fatal error:  Maximum execution time of 120 seconds exceeded in E:\Xampp\htdocs\instructor\generate_auto_quiz.php on line 217

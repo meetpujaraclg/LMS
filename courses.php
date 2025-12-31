@@ -4,16 +4,15 @@ require_once 'includes/config.php';
 require_once 'includes/auth.php';
 include 'includes/header.php';
 
-// Get all published courses
 global $pdo;
 $search = isset($_GET['search']) ? sanitize($_GET['search']) : '';
 $category = isset($_GET['category']) ? sanitize($_GET['category']) : '';
 $level = isset($_GET['level']) ? sanitize($_GET['level']) : '';
 
-$query = "SELECT c.*, u.first_name, u.last_name 
+$query = "SELECT c.*, i.first_name, i.last_name 
           FROM courses c 
-          JOIN users u ON c.instructor_id = u.id 
-          WHERE c.is_published = 1";
+          JOIN instructors i ON c.instructor_id = i.id 
+          WHERE c.duration >= 1";
 
 $params = [];
 
@@ -195,7 +194,7 @@ $categories = $categoriesStmt->fetchAll();
                             <div class="d-flex justify-content-between align-items-center">
                                 <span class="badge bg-secondary text-white"><?php echo ucfirst($course['level']); ?></span>
                                 <?php if ($course['price'] > 0): ?>
-                                    <span class="course-price">$<?php echo number_format($course['price'], 2); ?></span>
+                                    <span class="course-price">₹<?php echo number_format($course['price'], 2); ?></span>
                                 <?php else: ?>
                                     <span class="course-price">Free</span>
                                 <?php endif; ?>

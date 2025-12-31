@@ -1,4 +1,7 @@
 <?php
+
+$admin_pageTitle = "Manage Profile";
+
 require_once 'admin_auth.php';
 require_once __DIR__ . '/../config/database.php';
 require_once 'admin_header.php';
