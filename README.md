@@ -29,7 +29,6 @@ Edutech LMS is a web-based Learning Management System designed to facilitate cou
 - **Certificate Generation:** Receive a certificate after course completion.
 
 ### Hero Functionality (New)
-- **Dynamic Course Recommendations:** Highlights top 3 trending or new courses on the student dashboard.
 - **Interactive Cards:** Each card shows course thumbnail, title, instructor, and "Enroll Now" button.
 - **Animated Hover Effect:** Cards respond visually on hover for a modern look.
 - **Attractive & Easy to Implement:** Minimal backend effort, enhances user experience and visual appeal.
