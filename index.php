@@ -165,7 +165,7 @@ $totalEnrollments = $totalEnrollmentsStmt->fetchColumn();
         <div class="row text-center mb-5">
             <div class="col-md-12">
                 <span class="badge bg-primary mb-3 px-3 py-2 rounded-pill">Why Choose Us</span>
-                <h2 class="fw-bold display-5">Why Choose EdTech LMS?</h2>
+                <h2 class="fw-bold display-5">Why Choose Edutech LMS?</h2>
                 <p class="text-muted lead fs-5 mb-0">Experience a modern, blue‑themed learning platform designed for
                     your success.</p>
             </div>

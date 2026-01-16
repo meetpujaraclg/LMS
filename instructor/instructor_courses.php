@@ -191,10 +191,23 @@ if ($currentAction == 'add' || $currentAction == 'edit') {
                             <div class="row">
                                 <div class="col-md-6 mb-3">
                                     <label class="form-label fw-semibold">Category *</label>
-                                    <input type="text" class="form-control" name="category"
-                                        value="<?php echo $course ? htmlspecialchars($course['category']) : ''; ?>"
-                                        required>
+                                    <select class="form-select" name="category" required>
+                                        <option value="">-- Select Category --</option>
+                                        <?php
+                                        // Fetch all admin-created categories
+                                        $catStmt = $pdo->query("SELECT name FROM categories ORDER BY name ASC");
+                                        $categories = $catStmt->fetchAll(PDO::FETCH_ASSOC);
+
+                                        foreach ($categories as $cat):
+                                            $selected = ($course && $course['category'] == $cat['name']) ? 'selected' : '';
+                                            ?>
+                                            <option value="<?= htmlspecialchars($cat['name']) ?>" <?= $selected ?>>
+                                                <?= htmlspecialchars($cat['name']) ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
                                 </div>
+
                                 <div class="col-md-6 mb-3">
                                     <label class="form-label fw-semibold">Level *</label>
                                     <select class="form-select" name="level" required>
@@ -221,8 +234,9 @@ if ($currentAction == 'add' || $currentAction == 'edit') {
                         </div>
                         <div class="col-lg-4">
                             <div class="mb-3">
-                                <label class="form-label fw-semibold">Course Thumbnail</label>
-                                <input type="file" class="form-control" id="thumbnail" name="thumbnail" accept="image/*">
+                                <label class="form-label fw-semibold">Course Thumbnail *</label>
+                                <input type="file" required class="form-control" id="thumbnail" name="thumbnail"
+                                    accept="image/*">
                                 <small class="text-muted d-block mt-1">Recommended: 400x300px, Max 2MB</small>
                                 <div class="mt-3 text-center">
                                     <img src="<?php echo ($course && $course['thumbnail']) ? '../uploads/' . $course['thumbnail'] : ''; ?>"
@@ -252,7 +266,7 @@ if ($currentAction == 'add' || $currentAction == 'edit') {
         });
     </script>
 
-<?php
+    <?php
     // ---------------------------------------------------------
 // VIEW: Course List
 // ---------------------------------------------------------
@@ -391,7 +405,7 @@ if ($currentAction == 'add' || $currentAction == 'edit') {
         }
     </style>
 
-<?php
+    <?php
 }
 
 require_once 'instructor_footer.php';

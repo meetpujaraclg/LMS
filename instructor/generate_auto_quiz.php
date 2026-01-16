@@ -244,7 +244,7 @@ try {
 
     echo json_encode([
         'status' => 'success',
-        'message' => "🌍 Universal quiz generated for '{$lessonTitle}'! ($inserted questions)",
+        'message' => "Quiz generated for '{$lessonTitle}'! ($inserted questions)",
         'quiz' => $quiz,
         'lesson_title' => $lessonTitle
     ]);

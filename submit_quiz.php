@@ -1,11 +1,13 @@
 <?php
 if (session_status() === PHP_SESSION_NONE)
     session_start();
+
 require_once 'includes/config.php';
 
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
+
 header('Content-Type: application/json');
 
 // --- Check login ---
@@ -15,6 +17,7 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 $userId = $_SESSION['user_id'];
+
 if (!isset($_POST['lesson_id'])) {
     echo json_encode(['status' => 'error', 'message' => 'Lesson not found']);
     exit;
@@ -46,7 +49,7 @@ foreach ($quizzes as $q) {
 $score = round(($correct / $total) * 100);
 $passed = $score >= 60 ? 1 : 0;
 
-// === Save quiz result ===
+// --- Save quiz result ---
 $stmt = $pdo->prepare("
     INSERT INTO user_quiz_results (user_id, lesson_id, score, passed)
     VALUES (?, ?, ?, ?)
@@ -54,87 +57,75 @@ $stmt = $pdo->prepare("
 ");
 $stmt->execute([$userId, $lessonId, $score, $passed]);
 
-// === If passed, mark lesson complete ===
-if ($passed) {
-    // Mark lesson complete
-    $stmt = $pdo->prepare("
-        INSERT INTO user_progress (user_id, lesson_id, completed, watched_percent)
-        VALUES (?, ?, 1, 100)
-        ON DUPLICATE KEY UPDATE completed = 1, watched_percent = 100
-    ");
-    $stmt->execute([$userId, $lessonId]);
+// --- Fetch existing video progress ---
+$stmt = $pdo->prepare("SELECT completed AS video_completed, watched_percent, quiz_completed FROM user_progress WHERE user_id=? AND lesson_id=?");
+$stmt->execute([$userId, $lessonId]);
+$row = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    // Get course id of this lesson
-    $stmt = $pdo->prepare("
-        SELECT cm.course_id 
-        FROM lessons l 
+$videoCompleted = $row ? (int) $row['video_completed'] : 0;
+$watchedPercent = $row ? (int) $row['watched_percent'] : 0;
+
+// --- Determine lesson completion (video + quiz) ---
+$quizCompleted = $passed ? 1 : ($row ? (int) $row['quiz_completed'] : 0);
+$lessonCompleted = ($videoCompleted && $quizCompleted) ? 1 : 0;
+
+// --- Update user_progress ---
+$stmt = $pdo->prepare("
+    INSERT INTO user_progress (user_id, lesson_id, completed, completed_at, watched_percent, quiz_completed)
+    VALUES (?, ?, ?, IF(?=1, NOW(), NULL), ?, ?)
+    ON DUPLICATE KEY UPDATE
+        completed = GREATEST(completed, VALUES(completed)),
+        completed_at = IF(VALUES(completed)=1, NOW(), completed_at),
+        watched_percent = GREATEST(watched_percent, VALUES(watched_percent)),
+        quiz_completed = GREATEST(quiz_completed, VALUES(quiz_completed))
+");
+$stmt->execute([$userId, $lessonId, $lessonCompleted, $lessonCompleted, $watchedPercent, $quizCompleted]);
+
+// --- Get course id ---
+$stmt = $pdo->prepare("
+    SELECT cm.course_id 
+    FROM lessons l 
+    JOIN course_modules cm ON l.module_id = cm.id
+    WHERE l.id = ?
+");
+$stmt->execute([$lessonId]);
+$courseId = (int) $stmt->fetchColumn();
+
+// --- Recalculate course progress (only fully completed lessons) ---
+$courseProgress = 0;
+if ($courseId) {
+    $totalLessonsStmt = $pdo->prepare("
+        SELECT COUNT(*) 
+        FROM lessons l
         JOIN course_modules cm ON l.module_id = cm.id
-        WHERE l.id = ?
+        WHERE cm.course_id = ?
     ");
-    $stmt->execute([$lessonId]);
-    $courseId = (int) $stmt->fetchColumn();
+    $totalLessonsStmt->execute([$courseId]);
+    $totalLessons = (int) $totalLessonsStmt->fetchColumn();
 
-    // === Recalculate course progress (count both lessons + quizzes) ===
-    if ($courseId) {
-        // Count total lessons + quizzes
-        $totalStmt = $pdo->prepare("
-        SELECT 
-            (SELECT COUNT(*) 
-             FROM lessons l 
-             JOIN course_modules cm ON l.module_id = cm.id 
-             WHERE cm.course_id = :cid)
-          + (SELECT COUNT(*) 
-             FROM quizzes q 
-             JOIN lessons l ON q.lesson_id = l.id 
-             JOIN course_modules cm ON l.module_id = cm.id 
-             WHERE cm.course_id = :cid)
-        AS total_items
-    ");
-        $totalStmt->execute([':cid' => $courseId]);
-        $totalItems = (int) $totalStmt->fetchColumn();
-
-        // Count completed lessons (videos)
-        $completedLessonsStmt = $pdo->prepare("
+    $completedLessonsStmt = $pdo->prepare("
         SELECT COUNT(*) 
         FROM user_progress up
         JOIN lessons l ON up.lesson_id = l.id
         JOIN course_modules cm ON l.module_id = cm.id
-        WHERE cm.course_id = :cid AND up.user_id = :uid AND up.completed = 1
+        WHERE up.user_id = ? AND up.completed = 1 AND cm.course_id = ?
     ");
-        $completedLessonsStmt->execute([':cid' => $courseId, ':uid' => $userId]);
-        $completedLessons = (int) $completedLessonsStmt->fetchColumn();
+    $completedLessonsStmt->execute([$userId, $courseId]);
+    $completedLessons = (int) $completedLessonsStmt->fetchColumn();
 
-        // Count passed quizzes
-        $passedQuizzesStmt = $pdo->prepare("
-        SELECT COUNT(*) 
-        FROM user_quiz_results uq
-        JOIN lessons l ON uq.lesson_id = l.id
-        JOIN course_modules cm ON l.module_id = cm.id
-        WHERE cm.course_id = :cid AND uq.user_id = :uid AND uq.passed = 1
-    ");
-        $passedQuizzesStmt->execute([':cid' => $courseId, ':uid' => $userId]);
-        $passedQuizzes = (int) $passedQuizzesStmt->fetchColumn();
-
-        // Combine and calculate %
-        $completedItems = $completedLessons + $passedQuizzes;
-        $courseProgress = $totalItems > 0 ? round($completedItems * 100 / $totalItems) : 0;
+    if ($totalLessons > 0) {
+        $courseProgress = round($completedLessons * 100 / $totalLessons);
     }
-
-
-    echo json_encode([
-        'status' => 'passed',
-        'score' => $score,
-        'correct' => $correct,
-        'total' => $total,
-        'course_progress' => $courseProgress
-    ]);
-    exit;
 }
 
-// --- If failed ---
+// --- JSON Response ---
 echo json_encode([
-    'status' => 'failed',
+    'status' => $passed ? 'passed' : 'failed',
     'score' => $score,
     'correct' => $correct,
-    'total' => $total
+    'total' => $total,
+    'video_completed' => $videoCompleted,
+    'quiz_completed' => $quizCompleted,
+    'lesson_completed' => $lessonCompleted,
+    'course_progress' => $courseProgress
 ]);

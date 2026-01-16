@@ -53,77 +53,124 @@ if (!$user || !$course) {
     die("Invalid user or course.");
 }
 
-// --- Certificate Design ---
-$pdf = new FPDF('L', 'mm', 'A4');
+// ==================================================
+// Custom FPDF class with Circle() support
+// ==================================================
+class PDF extends FPDF
+{
+    function Circle($x, $y, $r, $style = 'D')
+    {
+        $op = ($style == 'F') ? 'f' : (($style == 'FD' || $style == 'DF') ? 'B' : 'S');
+        $MyArc = 4 / 3 * (sqrt(2) - 1);
+        $this->_out(sprintf('%.2F %.2F m', ($x + $r) * $this->k, ($this->h - $y) * $this->k));
+        $this->_Arc($x + $r, $y - $r * $MyArc, $x + $r * $MyArc, $y - $r, $x, $y - $r);
+        $this->_Arc($x - $r * $MyArc, $y - $r, $x - $r, $y - $r * $MyArc, $x - $r, $y);
+        $this->_Arc($x - $r, $y + $r * $MyArc, $x - $r * $MyArc, $y + $r, $x, $y + $r);
+        $this->_Arc($x + $r * $MyArc, $y + $r, $x + $r, $y + $r * $MyArc, $x + $r, $y);
+        $this->_out($op);
+    }
+
+    function _Arc($x1, $y1, $x2, $y2, $x3, $y3)
+    {
+        $h = $this->h;
+        $this->_out(sprintf(
+            '%.2F %.2F %.2F %.2F %.2F %.2F c',
+            $x1 * $this->k,
+            ($h - $y1) * $this->k,
+            $x2 * $this->k,
+            ($h - $y2) * $this->k,
+            $x3 * $this->k,
+            ($h - $y3) * $this->k
+        ));
+    }
+}
+
+// ==================================================
+// LinkedIn-style Edutech LMS Certificate (Single Page)
+// ==================================================
+$pdf = new PDF('L', 'mm', 'A4');
 $pdf->AddPage();
 
-// Colors
-$blue = [30, 144, 255];   // DodgerBlue
-$yellow = [255, 215, 0];  // Gold
-$darkBlue = [0, 51, 102];
+$primary = [59, 130, 246];  // Edutech blue
+$accent = [255, 215, 0];   // Gold
+$gray = [90, 90, 90];
 
-// Background light gradient effect (optional, subtle)
-for ($i = 0; $i < 210; $i += 3) {
-    $pdf->SetFillColor(240 - $i / 4, 248 - $i / 4, 255);
-    $pdf->Rect(0, $i, 297, 3, 'F');
-}
+// Background
+$pdf->SetFillColor(255, 255, 255);
+$pdf->Rect(0, 0, 297, 210, 'F');
 
-// Outer border
-$pdf->SetDrawColor(...$darkBlue);
-$pdf->SetLineWidth(4);
-$pdf->Rect(8, 8, 281, 194, 'D');
+// Left blue stripe
+$pdf->SetFillColor(...$primary);
+$pdf->Rect(0, 0, 25, 210, 'F');
 
-// Inner ribbon banner
-$pdf->SetFillColor(...$blue);
-$pdf->Rect(40, 30, 217, 20, 'F');
+// Circular badge
+$centerX = 12.5;
+$centerY = 50;
+$radius = 20;
+$pdf->SetDrawColor(...$accent);
+$pdf->SetLineWidth(2);
+$pdf->Circle($centerX, $centerY, $radius);
+$pdf->SetFillColor(255, 255, 255);
+$pdf->Circle($centerX, $centerY, $radius - 1.5, 'F');
 
-// Ribbon text
-$pdf->SetFont('Arial', 'B', 22);
-$pdf->SetTextColor(...$yellow);
-$pdf->SetY(32);
-$pdf->Cell(0, 10, "Certificate of Completion", 0, 1, 'C');
-
-// Logo
+// Logo in circle
 $logoPath = __DIR__ . '/images/edutech_logo.png';
 if (file_exists($logoPath)) {
-    $pdf->Image($logoPath, 20, 25, 30);
+    $pdf->Image($logoPath, $centerX - 10, $centerY - 10, 20, 20);
 }
 
-// Subtitle
-$pdf->SetFont('Arial', '', 16);
+// --------------------------------------------------
+// Main text area
+// --------------------------------------------------
+$pdf->SetXY(40, 30);
+$pdf->SetFont('Arial', 'B', 20);
+$pdf->SetTextColor(...$primary);
+$pdf->Cell(0, 10, "Edutech LMS", 0, 1, 'L');
+
+$pdf->SetFont('Arial', 'B', 18);
 $pdf->SetTextColor(0, 0, 0);
-$pdf->Ln(15);
-$pdf->Cell(0, 10, "This is to certify that", 0, 1, 'C');
+$pdf->SetX(40);
+$pdf->Cell(0, 10, "Certificate of Completion", 0, 1, 'L');
 
-// User name (single printing, bold blue)
-$pdf->SetFont('Arial', 'B', 28);
-$pdf->SetTextColor(...$blue);
-$name = strtoupper($user['first_name'] . ' ' . $user['last_name']);
-$pdf->Cell(0, 10, $name, 0, 1, 'C');
+$pdf->SetFont('Arial', '', 14);
+$pdf->SetX(40);
+$pdf->Cell(0, 10, "Congratulations, " . $user['first_name'] . " " . $user['last_name'], 0, 1, 'L');
 
-// Completed course text
-$pdf->SetFont('Arial', '', 18);
-$pdf->SetTextColor(0, 0, 0);
-$pdf->Ln(5);
-$pdf->Cell(0, 10, "has successfully completed the course", 0, 1, 'C');
+$pdf->Ln(10);
+$pdf->SetFont('Arial', 'B', 22);
+$pdf->SetTextColor(...$primary);
+$pdf->SetX(40);
+$pdf->Cell(0, 10, $course['title'], 0, 1, 'L');
 
-// Course title with blue highlight
-$pdf->SetFont('Arial', 'B', 24);
-$pdf->SetTextColor(...$blue);
-$pdf->Ln(3);
-$pdf->Cell(0, 10, $course['title'], 0, 1, 'C');
+$pdf->SetFont('Arial', '', 12);
+$pdf->SetTextColor(100, 100, 100);
+$pdf->SetX(40);
+$pdf->Cell(0, 8, "Course completed on " . date('M d, Y'), 0, 1, 'L');
 
-// Decorative footer lines
-$pdf->SetDrawColor(...$blue);
-$pdf->SetLineWidth(1.5);
-$pdf->Line(50, 160, 247, 160);
-$pdf->Line(50, 162, 247, 162);
+// --------------------------------------------------
+// Footer with signature and Certificate ID (same page)
+// --------------------------------------------------
+$pdf->SetY(150);
 
-// Date and congratulations
-$pdf->SetFont('Arial', 'I', 14);
-$pdf->SetTextColor(0, 0, 0);
-$pdf->SetY(-35);
-$pdf->Cell(0, 10, "Date: " . date('d M Y'), 0, 1, 'C');
+// Signature
+$signaturePath = __DIR__ . '/images/edutech_signature.png';
+if (file_exists($signaturePath)) {
+    $pdf->Image($signaturePath, 40, 151, 45);
+}
 
+$pdf->SetY(165);
+$pdf->SetX(40);
+$pdf->SetFont('Arial', 'I', 12);
+$pdf->SetTextColor(...$gray);
+$pdf->Cell(80, 6, "Team Edutech LMS", 0, 0, 'L');
+
+// Certificate ID (bottom-right corner)
+$pdf->SetFont('Arial', 'I', 10);
+$pdf->SetTextColor(130, 130, 130);
+$pdf->SetXY(210, 165);
+$certificateId = "EDU-" . strtoupper(substr(md5($userId . $courseId . date('Ymd')), 0, 10));
+$pdf->Cell(80, 6, "Certificate ID: $certificateId", 0, 0, 'R');
+
+// Output
 $pdf->Output('I', 'Certificate.pdf');
 exit();

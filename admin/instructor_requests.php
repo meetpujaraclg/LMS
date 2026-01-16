@@ -26,8 +26,6 @@ if (isset($_GET['action'], $_GET['id'])) {
             if ($action === 'approve') {
                 $update = $admin_pdo->prepare("UPDATE instructors SET profile_status = 'active', verified = 1 WHERE id = :id");
                 $update->execute([':id' => $id]);
-                $delete = $admin_pdo->prepare("DELETE FROM instructors WHERE id = :id");
-                $delete->execute([':id' => $id]);
                 $_SESSION['success'] = "Instructor approved and removed from request list!";
                 $subject = "Your Instructor Account Has Been Approved!";
                 $message = "
@@ -41,8 +39,6 @@ if (isset($_GET['action'], $_GET['id'])) {
                 if (empty($reason)) {
                     $_SESSION['error'] = "Rejection reason is required!";
                 } else {
-                    $update = $admin_pdo->prepare("UPDATE instructors SET profile_status = 'inactive', verified = 0 WHERE id = :id");
-                    $update->execute([':id' => $id]);
                     $delete = $admin_pdo->prepare("DELETE FROM instructors WHERE id = :id");
                     $delete->execute([':id' => $id]);
                     $_SESSION['error'] = "Instructor rejected and removed from request list!";
@@ -174,7 +170,13 @@ try {
     .detail-value {
         font-weight: 600;
         color: #1e293b;
+        word-break: break-all;
+        overflow-wrap: anywhere;
+        display: block;
+        max-width: 100%;
+        white-space: normal;
     }
+
 
     /* Document Buttons */
     .doc-btn {
@@ -332,6 +334,21 @@ try {
                                 <?php endif; ?>
                             </div>
                         </div>
+                        <div class="detail-item">
+                            <div class="detail-label">Demo Teaching Video</div>
+                            <div class="detail-value">
+                                <?php if (!empty($instructor['demo_video']) && file_exists("../uploads/instructors/" . $instructor['demo_video'])): ?>
+                                    <video width="100%" height="240" controls controlsList="no" style="border-radius: 12px; outline: none;">
+                                        <source src="../uploads/instructors/<?= urlencode($instructor['demo_video']); ?>"
+                                            type="video/mp4">
+                                        Your browser does not support the video tag.
+                                    </video>
+                                <?php else: ?>
+                                    N/A
+                                <?php endif; ?>
+                            </div>
+                        </div>
+
                     </div>
 
                     <div class="action-buttons">
@@ -356,6 +373,14 @@ try {
 </div>
 
 <script>
+
+    // Disable right-click on videos (prevent save)
+    document.addEventListener('contextmenu', function (e) {
+        if (e.target.tagName === 'VIDEO') {
+            e.preventDefault();
+        }
+    });
+
     function rejectWithReason(id) {
         const reason = prompt("Please enter the reason for rejection:");
         if (reason && reason.trim() !== "") {

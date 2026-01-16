@@ -66,8 +66,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_lesson'])) {
             $fileName = uniqid('lesson_', true) . '.' . $fileExtension;
             if (move_uploaded_file($_FILES['video']['tmp_name'], $uploadDir . $fileName)) {
                 $video_path = 'videos/' . $fileName;
-                $duration = getVideoDuration($uploadDir . $fileName);
+                $fullVideoPath = $uploadDir . $fileName;
+                $duration = getVideoDuration($fullVideoPath);
             }
+
         }
     }
 
@@ -92,19 +94,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_lesson'])) {
             }
 
             $stmt = $pdo->prepare("
-                UPDATE lessons SET title = ?, content = ?, video_url = ?, duration = ?, 
-                video_path = ?, sort_order = ? WHERE id = ? AND module_id = ?
-            ");
-            $stmt->execute([$title, $content, $video_url, $finalDuration, $finalVideoPath, $sort_order, $lessonId, $moduleId]);
+    UPDATE lessons 
+    SET title = ?, 
+        content = ?, 
+        video_url = ?, 
+        duration = ?, 
+        video_path = ?,
+        sort_order = ? 
+    WHERE id = ? AND module_id = ?
+");
+
+            $stmt->execute([
+                $title,
+                $content,
+                $video_url,
+                $finalDuration,
+                $finalVideoPath,
+                $sort_order,
+                $lessonId,
+                $moduleId
+            ]);
+
 
         } else {
             // CREATE new lesson - CAPTURE lessonId IMMEDIATELY
             $stmt = $pdo->prepare("
-                INSERT INTO lessons (module_id, title, content, video_url, duration, video_path, sort_order, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
-            ");
+    INSERT INTO lessons (module_id, title, content, video_url, duration, video_path, sort_order, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+");
             $stmt->execute([$moduleId, $title, $content, $video_url, $duration, $video_path, $sort_order]);
-            $lessonId = $pdo->lastInsertId(); // ✅ FIXED: Now $lessonId is SET
+
+            $lessonId = $pdo->lastInsertId();
         }
 
         // Handle MULTIPLE materials upload - NOW lessonId is guaranteed
@@ -304,8 +324,8 @@ $lessons = $stmt->fetchAll();
                     </div>
 
                     <div class="col-md-3">
-                        <label class="form-label fw-semibold">Upload Video</label>
-                        <input type="file" class="form-control" name="video" accept="video/*">
+                        <label class="form-label fw-semibold">Upload Video *</label>
+                        <input type="file" required class="form-control" name="video" accept="video/*">
                         <?php if ($editLesson && $editLesson['video_path']): ?>
                             <small class="text-muted d-block mt-1">Current:
                                 <?php echo basename($editLesson['video_path']); ?></small>
@@ -313,8 +333,8 @@ $lessons = $stmt->fetchAll();
                     </div>
 
                     <div class="col-md-6">
-                        <label class="form-label fw-semibold">Upload Materials</label>
-                        <input type="file" class="form-control" name="materials[]" multiple
+                        <label class="form-label fw-semibold">Upload Materials *</label>
+                        <input type="file" required class="form-control" name="materials[]" multiple
                             accept=".pdf,.doc,.docx,.ppt,.pptx,.zip,.txt,.xlsx,.xls">
 
                         <?php if ($editLesson): ?>
@@ -347,7 +367,7 @@ $lessons = $stmt->fetchAll();
 
                     <div class="col-md-6">
                         <label class="form-label fw-semibold">Video URL</label>
-                        <input type="text" class="form-control" name="video_url"
+                        <input type="text" readonly class="form-control" name="video_url"
                             value="<?php echo $editLesson ? htmlspecialchars($editLesson['video_url']) : ''; ?>">
                     </div>
 
@@ -443,18 +463,17 @@ $lessons = $stmt->fetchAll();
                                     <i class="fas fa-trash"></i>
                                 </a>
                             </div>
-                            <button type="button"
-                                class="btn btn-sm btn-warning auto-generate<?php echo isset($lesson['quiz_count']) && $lesson['quiz_count'] > 0 ? ' btn-outline-warning' : ''; ?>"
-                                data-lesson-id="<?php echo $lesson['id']; ?>">
-                                <i class="fas fa-magic me-1"></i>
-                                <?php echo isset($lesson['quiz_count']) && $lesson['quiz_count'] > 0 ? 'Regenerate' : 'Auto Generate'; ?>
-                                <?php if (isset($lesson['quiz_count']) && $lesson['quiz_count'] > 0): ?>
-                                    (<small><?php echo $lesson['quiz_count']; ?></small>)
-                                <?php endif; ?>
-                            </button>
 
-
+                            <div class="d-flex gap-2">
+                                <button type="button"
+                                    class="btn btn-sm btn-warning auto-generate<?php echo isset($lesson['quiz_count']) && $lesson['quiz_count'] > 0 ? ' btn-outline-warning' : ''; ?>"
+                                    data-lesson-id="<?php echo $lesson['id']; ?>">
+                                    <i class="fas fa-magic me-1"></i>
+                                    <?php echo isset($lesson['quiz_count']) && $lesson['quiz_count'] > 0 ? 'Regenerate' : 'Auto Generate'; ?>
+                                </button>
+                            </div>
                         </div>
+
 
                     </div>
                 </div>
@@ -521,6 +540,8 @@ $lessons = $stmt->fetchAll();
             btn.innerHTML = original;
         }
     });
+
+
 </script>
 
 

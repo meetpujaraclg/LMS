@@ -403,7 +403,7 @@ if (isset($_GET['action']) && $_GET['action'] == 'edit' && isset($_GET['id'])) {
                             <?= $editingCategory ? 'Update Category' : 'Add Category' ?>
                         </button>
                         <?php if ($editingCategory): ?>
-                            <a href="manage_categories.php" class="btn btn-outline-secondary">Cancel</a>
+                            <a href="categories.php" class="btn btn-outline-secondary">Cancel</a>
                         <?php endif; ?>
                     </div>
                 </form>
@@ -451,31 +451,6 @@ if (isset($_GET['action']) && $_GET['action'] == 'edit' && isset($_GET['id'])) {
                     </div>
                 <?php endif; ?>
 
-                <!-- Course Categories from Existing Data -->
-                <?php if (!empty($categoryUsage)): ?>
-                    <div class="mt-5">
-                        <h3 style="color: var(--primary-blue);">📊 Course Categories (Auto-detected)</h3>
-                        <div class="row">
-                            <?php
-                            $colorIndex = 0;
-                            foreach ($categoryUsage as $category => $count):
-                                $color = $availableColors[$colorIndex % count($availableColors)];
-                                $colorIndex++;
-                                ?>
-                                <div class="col-md-6 col-lg-4 mb-3">
-                                    <div class="course-category-item">
-                                        <div class="rounded-circle mx-auto mb-3 d-flex align-items-center justify-content-center"
-                                            style="width: 60px; height: 60px; background: <?= $color ?>;">
-                                            <i class="fas fa-book text-white fa-lg"></i>
-                                        </div>
-                                        <h6 class="mb-2"><?= htmlspecialchars($category) ?></h6>
-                                        <span class="badge bg-primary"><?= $count ?> course<?= $count != 1 ? 's' : '' ?></span>
-                                    </div>
-                                </div>
-                            <?php endforeach; ?>
-                        </div>
-                    </div>
-                <?php endif; ?>
             </div>
         </div>
 </div>

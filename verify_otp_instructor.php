@@ -1,6 +1,6 @@
 <?php
 session_start();
-require_once 'includes/config.php';  // <-- Use correct DB connection ($pdo)
+require_once 'includes/config.php';
 require_once 'includes/mailer_config.php';
 
 $pageTitle = "EduTech - Verify OTP (Instructor)";
@@ -30,20 +30,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             mkdir($FINAL_UPLOAD_DIR, 0755, true);
 
         $movedFiles = [];
-        foreach (['profile_picture', 'qualification', 'id_proof'] as $fileKey) {
+        foreach (['profile_picture', 'qualification', 'id_proof', 'demo_video'] as $fileKey) {
             $tempFile = $TEMP_UPLOAD_DIR . $instructor[$fileKey];
+            $finalFile = $FINAL_UPLOAD_DIR . $instructor[$fileKey];
+
             if (file_exists($tempFile)) {
-                rename($tempFile, $FINAL_UPLOAD_DIR . $instructor[$fileKey]);
-                $movedFiles[$fileKey] = $instructor[$fileKey];
+                if (rename($tempFile, $finalFile)) {
+                    $movedFiles[$fileKey] = $instructor[$fileKey];
+                } else {
+                    $error = "Failed to move file: " . htmlspecialchars($fileKey);
+                    break; // Stop further processing if any move fails
+                }
+            } else {
+                $error = ucfirst(str_replace('_', ' ', $fileKey)) . " file not found.";
+                break;
             }
         }
+
 
         try {
             $stmt = $pdo->prepare("
                 INSERT INTO instructors 
-                (first_name, last_name, email, password, profile_picture, bio, id_proof, qualification, experience, expertise_area, profile_status, verified, email_verified, created_at, updated_at)
+                (first_name, last_name, email, password, profile_picture, bio, id_proof, qualification, demo_video, experience, expertise_area, profile_status, verified, email_verified, created_at, updated_at)
                 VALUES 
-                (:first_name, :last_name, :email, :password, :profile_picture, :bio, :id_proof, :qualification, :experience, :expertise_area, 'pending', 0, 1, NOW(), NOW())
+                (:first_name, :last_name, :email, :password, :profile_picture, :bio, :id_proof, :qualification, :demo_video, :experience, :expertise_area, 'pending', 0, 1, NOW(), NOW())
             ");
             $stmt->execute([
                 ':first_name' => $instructor['first_name'],
@@ -54,17 +64,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':bio' => $instructor['bio'],
                 ':id_proof' => $movedFiles['id_proof'] ?? null,
                 ':qualification' => $movedFiles['qualification'] ?? null,
+                ':demo_video' => $movedFiles['demo_video'] ?? null, // ✅ new column
                 ':experience' => $instructor['experience'],
                 ':expertise_area' => $instructor['expertise_area']
             ]);
 
             unset($_SESSION['instructor_otp'], $_SESSION['temp_instructor']);
             $success = "🎉 Your instructor registration request has been submitted successfully!";
-            echo "<script>
-                    setTimeout(function() {
-                        window.location.href = 'index.php';
-                    }, 3000);
-                  </script>";
+            header("refresh:3;url=index.php");
 
         } catch (PDOException $e) {
             $error = "Database error: " . $e->getMessage();
@@ -72,7 +79,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 ?>
-
 <!DOCTYPE html>
 <html lang="en">
 
@@ -123,9 +129,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
                     <div class="card-body p-4">
                         <?php if ($error): ?>
-                            <div class="alert alert-danger"><?= $error ?></div><?php endif; ?>
+                            <div class="alert alert-danger"><?= $error ?></div>
+                        <?php endif; ?>
                         <?php if ($success): ?>
-                            <div class="alert alert-success"><?= $success ?></div><?php endif; ?>
+                            <div class="alert alert-success"><?= $success ?></div>
+                        <?php endif; ?>
 
                         <?php if (!$success): ?>
                             <form method="POST">

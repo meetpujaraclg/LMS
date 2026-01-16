@@ -660,6 +660,35 @@ include 'includes/header.php';
                                                             <span class="badge bg-secondary"><i
                                                                     class="fas fa-lock me-1"></i>Locked</span>
                                                         <?php endif; ?>
+                                                        <?php if ($isEnrolled && !$isLocked && !empty($lesson['materials'])): ?>
+                                                            <button class="btn btn-sm btn-info mt-2 generate-diagram"
+                                                                data-lesson-id="<?= $lesson['id']; ?>">
+                                                                <i class="fas fa-project-diagram me-1"></i> Visualize Material
+                                                            </button>
+                                                        <?php endif; ?>
+
+                                                        <?php if ($isEnrolled && !$isLocked): ?>
+                                                            <?php
+                                                            // ✅ Check if this lesson has any quiz questions
+                                                            $quizCheck = $pdo->prepare("SELECT COUNT(*) FROM quizzes WHERE lesson_id = ?");
+                                                            $quizCheck->execute([$lesson['id']]);
+                                                            $hasQuiz = $quizCheck->fetchColumn() > 0;
+                                                            ?>
+
+                                                            <?php if ($hasQuiz): ?>
+                                                                <div class="quiz-subsection mt-2 ps-3 border-start border-primary-subtle"
+                                                                    id="quiz-subsection-<?= $lesson['id']; ?>">
+                                                                    <button class="btn btn-sm btn-outline-info take-quiz-btn"
+                                                                        data-lesson-id="<?= $lesson['id']; ?>"
+                                                                        data-course-id="<?= $courseId; ?>" <?= !$isCompleted ? 'disabled title="Complete the video to unlock this quiz"' : ''; ?>>
+                                                                        <i class="fas fa-question-circle me-1"></i> Take Quiz
+                                                                    </button>
+                                                                    <div class="quiz-container mt-2"
+                                                                        id="quiz-container-<?= $lesson['id']; ?>"></div>
+                                                                </div>
+                                                            <?php endif; ?>
+                                                        <?php endif; ?>
+
                                                     </li>
 
                                                 <?php endforeach; ?>
@@ -766,23 +795,87 @@ include 'includes/header.php';
                     </div>
                 <?php endif; ?>
 
-
             </div>
         </div>
 
     </div>
 </div>
 
-<script>
+<!-- Diagram Modal -->
+<div class="modal fade" id="diagramModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-info text-white">
+                <h5 class="modal-title"><i class="fas fa-project-diagram me-2"></i>Lesson Concept Diagram</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="diagramContainer" class="border rounded p-3 bg-light" style="height: 500px; overflow:auto;">
+                    <p class="text-center text-muted">No diagram loaded yet.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 
+<script>
     // Disable right-click on videos (prevent save)
     document.addEventListener('contextmenu', function (e) {
-        if (e.target.tagName === 'VIDEO') {
-            e.preventDefault();
+        if (e.target.tagName === 'VIDEO') e.preventDefault();
+    });
+
+    // === AUTO DIAGRAM GENERATION ===
+    document.addEventListener('click', async (e) => {
+        const btn = e.target.closest('.generate-diagram');
+        if (!btn) return;
+
+        const lessonId = btn.dataset.lessonId;
+        const diagramModal = new bootstrap.Modal(document.getElementById('diagramModal'));
+        const diagramContainer = document.getElementById('diagramContainer');
+        diagramContainer.innerHTML = '<p class="text-center text-muted">Generating diagram...</p>';
+
+        btn.disabled = true;
+        const original = btn.innerHTML;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...';
+
+        try {
+            const res = await fetch('instructor/generate_diagram.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: `lesson_id=${encodeURIComponent(lessonId)}`
+            });
+
+            const text = await res.text();
+            console.log("Server response:", text);
+            const data = JSON.parse(text);
+
+            if (data.status === 'success') {
+                setTimeout(async () => {
+                    try {
+                        const { svg } = await mermaid.render('diagram_' + Date.now(), data.diagram);
+                        diagramContainer.innerHTML = svg;
+                    } catch (err) {
+                        diagramContainer.innerHTML = `<p class="text-danger">⚠️ Mermaid render error: ${err.message}</p>`;
+                    }
+                }, 100);
+
+                diagramModal.show();
+            } else {
+                diagramContainer.innerHTML = `<p class="text-danger">⚠️ ${data.message}</p>`;
+                diagramModal.show();
+            }
+        } catch (err) {
+            diagramContainer.innerHTML = `<p class="text-danger">⚠️ Error: ${err.message}</p>`;
+            diagramModal.show();
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = original;
         }
     });
 
     document.addEventListener('DOMContentLoaded', function () {
+
+        // === VIDEO HANDLER ===
         document.querySelectorAll('.load-lesson').forEach(function (btn) {
             btn.addEventListener('click', function (e) {
                 e.preventDefault();
@@ -794,121 +887,38 @@ include 'includes/header.php';
                 if (!url) return;
 
                 const container = document.getElementById('videoContainer');
-                const quizContainer = document.getElementById('quizContainer');
-
                 if (!container) return;
 
                 // Load video player dynamically
                 container.innerHTML = `
-                <video class="video-player" controls preload="metadata" controlsList="nodownload" id="activeVideo">
-                    <source src="${url}" type="video/mp4">
-                    Your browser does not support the video tag.
-                </video>
-            `;
+                    <video class="video-player" controls preload="metadata" controlsList="nodownload" id="activeVideo">
+                        <source src="${url}" type="video/mp4">
+                        Your browser does not support the video tag.
+                    </video>
+                `;
 
-                // Remove active class from other lessons and highlight this one
+                // Highlight current lesson
                 document.querySelectorAll('.list-group-item').forEach(li => li.classList.remove('active-lesson'));
                 this.closest('.list-group-item').classList.add('active-lesson');
 
-                // Update video header title
+                // Update title
                 const header = document.querySelector('.video-card .card-header h5');
-                if (header) {
-                    header.innerHTML = '<i class="fas fa-play-circle text-primary me-2"></i>' + title;
-                }
+                if (header) header.innerHTML = '<i class="fas fa-play-circle text-primary me-2"></i>' + title;
 
-                // === Fetch and display quiz for this lesson ===
-                if (quizContainer) {
-                    quizContainer.innerHTML = "<div class='text-center py-3 text-muted'>Loading quiz...</div>";
-
-                    fetch('fetch_quiz.php', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                        body: `lesson_id=${encodeURIComponent(lessonId)}`
-                    })
-                        .then(res => res.text())
-                        .then(html => {
-                            quizContainer.innerHTML = html;
-
-                            // Attach the quiz submit handler AFTER the quiz is loaded
-                            const submitBtn = quizContainer.querySelector('#submitQuiz');
-                            if (submitBtn) {
-                                submitBtn.addEventListener('click', function () {
-                                    const form = quizContainer.querySelector('#quizForm');
-                                    if (!form) return;
-                                    const formData = new FormData(form);
-                                    formData.append('lesson_id', lessonId);
-
-                                    fetch('submit_quiz.php', {
-                                        method: 'POST',
-                                        body: formData
-                                    })
-                                        .then(res => res.json())
-                                        .then(data => {
-                                            const resultDiv = quizContainer.querySelector('#quizResult');
-                                            if (data.status === 'passed') {
-                                                quizContainer.innerHTML = `
-            <div class='alert alert-success text-center mb-0'>
-                ✅ You passed this quiz! Score: ${data.score}% (${data.correct}/${data.total})
-            </div>
-        `;
-                                                // Update course progress bar
-                                                const bar = document.querySelector('.sidebar .progress-bar');
-                                                if (bar && typeof data.course_progress !== 'undefined') {
-                                                    bar.style.width = data.course_progress + '%';
-                                                    bar.setAttribute('aria-valuenow', data.course_progress);
-                                                    bar.textContent = data.course_progress + '%';
-                                                    bar.style.boxShadow = '0 0 10px #22c55e';
-                                                    setTimeout(() => bar.style.boxShadow = 'none', 800);
-                                                }
-                                            } else if (data.status === 'failed') {
-                                                resultDiv.innerHTML = `
-            <div class='alert alert-warning text-center'>
-                ❌ You scored ${data.score}% (${data.correct}/${data.total}). Try again to pass.
-            </div>
-        `;
-                                            } else {
-                                                resultDiv.innerHTML = `<div class='alert alert-danger text-center'>${data.message || 'Error'}</div>`;
-                                            }
-                                        })
-                                        .catch(err => {
-                                            quizContainer.querySelector('#quizResult').innerHTML = "<div class='text-danger'>Error submitting quiz.</div>";
-                                            console.error("Quiz error:", err);
-                                        });
-
-                                });
-                            }
-                        })
-                        .catch(() => {
-                            quizContainer.innerHTML = "<div class='text-danger'>Failed to load quiz.</div>";
-                        });
-
-                }
-
-                // === VIDEO PROGRESS TRACKING ===
                 const video = document.getElementById('activeVideo');
                 if (!video) return;
 
                 const button = this;
-                let watchedTime = 0;
-                let lastTime = 0;
-                let maxWatched = 0;
-                let lastSentPercent = -1;
-                const MIN_DELTA = 5;
-                const MIN_WATCH_THRESHOLD = 0.9;
-                const SYNC_INTERVAL = 10000;
+                let watchedTime = 0, lastTime = 0, maxWatched = 0, lastSentPercent = -1;
+                const MIN_DELTA = 5, MIN_WATCH_THRESHOLD = 0.9, SYNC_INTERVAL = 10000;
                 let lastSyncTime = 0;
 
-                // Prevent skipping ahead beyond max watched position
-                // video.addEventListener('seeking', () => {
-                //     if (video.currentTime > maxWatched + 5) {
-                //         video.currentTime = maxWatched;
-                //     }
-                // });
+                video.addEventListener('seeking', () => {
+                    if (video.currentTime > maxWatched + 5) video.currentTime = maxWatched;
+                });
 
-                // Send progress to backend
                 function sendProgress(percent) {
                     percent = Math.max(0, Math.min(100, percent));
-
                     if (percent === lastSentPercent) return;
                     if (percent < 100 && lastSentPercent >= 0 && (percent - lastSentPercent) < MIN_DELTA) return;
                     lastSentPercent = percent;
@@ -916,7 +926,7 @@ include 'includes/header.php';
                     fetch('update_progress.php', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                        body: `lesson_id=${encodeURIComponent(lessonId)}&course_id=${encodeURIComponent(courseId)}&percent=${encodeURIComponent(percent)}`
+                        body: `lesson_id=${lessonId}&course_id=${courseId}&percent=${percent}`
                     })
                         .then(res => res.json())
                         .then(data => {
@@ -924,7 +934,6 @@ include 'includes/header.php';
                                 const bar = document.querySelector('.sidebar .progress-bar');
                                 if (bar && typeof data.course_progress !== 'undefined') {
                                     bar.style.width = data.course_progress + '%';
-                                    bar.setAttribute('aria-valuenow', data.course_progress);
                                     bar.textContent = data.course_progress + '%';
                                     bar.style.boxShadow = '0 0 10px #22c55e';
                                     setTimeout(() => bar.style.boxShadow = 'none', 800);
@@ -933,10 +942,8 @@ include 'includes/header.php';
                         });
                 }
 
-                // Track real watch time
                 video.addEventListener('timeupdate', () => {
                     if (!video.duration) return;
-
                     if (!video.seeking && video.currentTime > lastTime) {
                         const diff = video.currentTime - lastTime;
                         watchedTime += diff;
@@ -946,8 +953,6 @@ include 'includes/header.php';
 
                     const percentWatched = Math.min((watchedTime / video.duration) * 100, 100);
                     const rounded = Math.round(percentWatched);
-
-                    // Update small bar under lesson
                     const mini = button.closest('.list-group-item').querySelector('.lesson-progress .progress-bar');
                     if (mini) mini.style.width = rounded + '%';
 
@@ -957,34 +962,185 @@ include 'includes/header.php';
                         sendProgress(rounded);
                     }
 
-                    // Mark complete when 90% watched
                     if (percentWatched >= MIN_WATCH_THRESHOLD * 100 && !button.classList.contains('btn-success')) {
                         button.innerHTML = 'Completed ✅';
-                        button.classList.remove('btn-outline-primary');
-                        button.classList.add('btn-success');
+                        button.classList.replace('btn-outline-primary', 'btn-success');
 
-                        // ✅ Unlock the next lesson dynamically
-                        const currentLi = button.closest('li');
-                        const nextLi = currentLi.nextElementSibling;
+                        const quizBtn = document.querySelector(`#quiz-subsection-${lessonId} .take-quiz-btn`);
+                        if (quizBtn) {
+                            quizBtn.disabled = false;
+                            quizBtn.title = "Now you can take this quiz!";
+                            quizBtn.classList.replace('btn-outline-info', 'btn-info');
+                        }
+
+                        const nextLi = button.closest('li').nextElementSibling;
                         if (nextLi) {
                             const nextBtn = nextLi.querySelector('.load-lesson');
-                            if (nextBtn) {
-                                nextBtn.removeAttribute('disabled');
-                                nextBtn.classList.remove('btn-outline-secondary');
-                            }
+                            if (nextBtn) nextBtn.removeAttribute('disabled');
                         }
                     }
                 });
 
+                video.addEventListener('ended', () => sendProgress(100));
+            });
+        });
 
-                // Final sync on video end
-                video.addEventListener('ended', () => {
-                    sendProgress(100);
-                });
+        // === QUIZ HANDLER ===
+        document.querySelectorAll('.take-quiz-btn').forEach(function (quizBtn) {
+            quizBtn.addEventListener('click', async function () {
+                const lessonId = this.dataset.lessonId;
+                const courseId = this.dataset.courseId;
+                const container = document.getElementById(`quiz-container-${lessonId}`);
+                if (!container) return;
+
+                container.innerHTML = "<div class='text-center py-2 text-muted'>Loading quiz...</div>";
+
+                fetch('fetch_quiz.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: `lesson_id=${lessonId}`
+                })
+                    .then(res => res.text())
+                    .then(async html => {
+                        container.innerHTML = html;
+
+                        // === QUIZ RESTRICTION LOIGC START ===
+                        let quizActive = true;
+                        let lockTimer = null;
+
+                        const lockKey = `quiz_lock_${lessonId}`;
+                        const lockData = JSON.parse(localStorage.getItem(lockKey) || 'null');
+
+                        // Countdown display
+                        function startCountdown(lockUntil) {
+                            const countdownDiv = document.createElement('div');
+                            countdownDiv.className = 'alert alert-danger text-center mt-3 fw-semibold';
+                            container.innerHTML = '';
+                            container.appendChild(countdownDiv);
+
+                            function updateCountdown() {
+                                const remainingMs = lockUntil - Date.now();
+                                if (remainingMs <= 0) {
+                                    localStorage.removeItem(lockKey);
+                                    countdownDiv.innerHTML = `
+                <div class='alert alert-success text-center'>
+                    ✅ Lock expired.<br> Refresh the page to retry the quiz.
+                </div>`;
+                                    clearInterval(lockTimer);
+                                    return;
+                                }
+
+                                const hours = Math.floor(remainingMs / 3600000);
+                                const mins = Math.floor((remainingMs % 3600000) / 60000);
+                                const secs = Math.floor((remainingMs % 60000) / 1000);
+                                countdownDiv.innerHTML = `
+            <strong>🚫 Quiz Locked!</strong><br>
+            You can retry this quiz in <span class="text-warning">${hours}h ${mins}m ${secs}s</span>.
+        `;
+                            }
+
+                            updateCountdown();
+                            lockTimer = setInterval(updateCountdown, 1000);
+                        }
+
+                        // If already locked
+                        if (lockData && Date.now() < lockData.until) {
+                            startCountdown(lockData.until);
+                            return;
+                        }
+
+                        // Request fullscreen
+                        try {
+                            await document.documentElement.requestFullscreen();
+                        } catch (err) {
+                            console.warn("Fullscreen not supported:", err);
+                        }
+
+                        function lockQuiz(reason) {
+                            if (!quizActive) return;
+                            quizActive = false;
+
+                            const lockUntil = Date.now() + 2 * 60 * 60 * 1000; // 2 hours
+                            localStorage.setItem(lockKey, JSON.stringify({ until: lockUntil }));
+
+                            alert(`❌ ${reason}\nYour quiz is now locked for 2 hours.`);
+                            startCountdown(lockUntil);
+
+                            removeRestrictions();
+                        }
+
+                        function handleBlur() {
+                            if (quizActive) lockQuiz("Tab switch or window unfocus detected");
+                        }
+
+                        function handleFullscreenChange() {
+                            if (quizActive && !document.fullscreenElement) {
+                                lockQuiz("Exited fullscreen mode");
+                            }
+                        }
+
+                        function removeRestrictions() {
+                            window.removeEventListener('blur', handleBlur);
+                            document.removeEventListener('fullscreenchange', handleFullscreenChange);
+                            if (document.fullscreenElement) document.exitFullscreen();
+                        }
+
+                        window.addEventListener('blur', handleBlur);
+                        document.addEventListener('fullscreenchange', handleFullscreenChange);
+
+                        // === QUIZ RESTRICTION LOIGC END ===
+
+                        const submitBtn = container.querySelector('#submitQuiz');
+                        if (submitBtn) {
+                            submitBtn.addEventListener('click', function () {
+                                const form = container.querySelector('#quizForm');
+                                if (!form) return;
+                                const formData = new FormData(form);
+                                formData.append('lesson_id', lessonId);
+
+                                fetch('submit_quiz.php', { method: 'POST', body: formData })
+                                    .then(res => res.json())
+                                    .then(data => {
+                                        removeRestrictions(); // ✅ Disable all restrictions after quiz submission
+                                        const resultDiv = container.querySelector('#quizResult');
+                                        if (data.status === 'passed') {
+                                            resultDiv.innerHTML = `
+                                                <div class='alert alert-success text-center mb-0'>
+                                                    ✅ You passed! Score: ${data.score}% (${data.correct}/${data.total})
+                                                </div>`;
+
+                                            const bar = document.querySelector('.sidebar .progress-bar');
+                                            if (bar && typeof data.course_progress !== 'undefined') {
+                                                bar.style.width = data.course_progress + '%';
+                                                bar.textContent = data.course_progress + '%';
+                                            }
+
+                                        } else if (data.status === 'failed') {
+                                            resultDiv.innerHTML = `
+                                                <div class='alert alert-warning text-center mb-0'>
+                                                    ❌ You scored ${data.score}% (${data.correct}/${data.total}). Try again.
+                                                </div>`;
+                                        } else {
+                                            resultDiv.innerHTML = `<div class='alert alert-danger text-center'>${data.message || 'Error'}</div>`;
+                                        }
+                                    })
+                                    .catch(() => container.querySelector('#quizResult').innerHTML = "<div class='text-danger'>Error submitting quiz.</div>");
+                            });
+                        }
+                    })
+                    .catch(() => container.innerHTML = "<div class='text-danger'>Failed to load quiz.</div>");
             });
         });
     });
+</script>
 
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+    mermaid.initialize({
+        startOnLoad: false,
+        theme: 'forest',
+        securityLevel: 'loose'
+    });
 </script>
 
 <?php include 'includes/footer.php'; ?>

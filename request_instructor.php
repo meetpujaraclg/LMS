@@ -53,10 +53,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     $err = '';
-    $tempSaved = ['profile_picture' => '', 'qualification' => '', 'id_proof' => ''];
+    $tempSaved = [
+        'profile_picture' => '',
+        'qualification' => '',
+        'id_proof' => '',
+        'demo_video' => ''
+    ];
+
     $finfo = finfo_open(FILEINFO_MIME_TYPE);
 
-    // Profile Picture
+    // ✅ Profile Picture
     if (!$error) {
         if ($_FILES['profile_picture']['error'] !== UPLOAD_ERR_OK) {
             $error = "Profile picture is required.";
@@ -69,7 +75,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // Qualification PDF
+    // ✅ Qualification PDF
     if (!$error) {
         if ($_FILES['qualification']['error'] !== UPLOAD_ERR_OK) {
             $error = "Qualification PDF is required.";
@@ -82,7 +88,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // ID Proof PDF
+    // ✅ ID Proof PDF
     if (!$error) {
         if ($_FILES['id_proof']['error'] !== UPLOAD_ERR_OK) {
             $error = "ID proof PDF is required.";
@@ -95,23 +101,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
+    // ✅ Demo Teaching Video (10 min min, MP4 only)
+    if (!$error) {
+        if ($_FILES['demo_video']['error'] !== UPLOAD_ERR_OK) {
+            $error = "Demo teaching video is required.";
+        } else {
+            $videoTmp = $_FILES['demo_video']['tmp_name'];
+            $videoMime = finfo_file($finfo, $videoTmp);
+            $allowedVideoMimes = ['video/mp4'];
+
+            if (!in_array($videoMime, $allowedVideoMimes)) {
+                $error = "Demo video must be in MP4 format.";
+            } else {
+                // Use ffprobe to get duration
+                $cmd = "ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 " . escapeshellarg($videoTmp);
+                $duration = floatval(shell_exec($cmd));
+
+                if ($duration < 600) { // 600 seconds = 10 minutes
+                    $error = "Demo video must be at least 10 minutes long.";
+                } else {
+                    $tempSaved['demo_video'] = saveFileToTemp('demo_video', $TEMP_UPLOAD_DIR, $err);
+                }
+            }
+        }
+    }
+
     finfo_close($finfo);
 
+    // ✅ If error → delete temp files
     if ($error) {
         foreach ($tempSaved as $f) {
             if ($f && file_exists($TEMP_UPLOAD_DIR . $f))
                 @unlink($TEMP_UPLOAD_DIR . $f);
         }
+
     } else {
+        // ✅ All good → save to session and send OTP
         $data['profile_picture'] = $tempSaved['profile_picture'];
         $data['qualification'] = $tempSaved['qualification'];
         $data['id_proof'] = $tempSaved['id_proof'];
+        $data['demo_video'] = $tempSaved['demo_video'];
 
         $_SESSION['temp_instructor'] = $data;
 
-        // ✅ Unified session key for OTP
+        // Generate OTP
         $_SESSION['instructor_otp'] = rand(100000, 999999);
-
         sendOTP($data['email'], $_SESSION['instructor_otp']);
 
         header("Location: verify_otp_instructor.php");
@@ -119,6 +153,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 ?>
+
 
 <!DOCTYPE html>
 <html lang="en">
@@ -204,9 +239,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="card-body p-4">
 
                 <?php if ($success): ?>
-                    <div class="alert alert-success"><?= htmlspecialchars($success) ?></div>
+                        <div class="alert alert-success"><?= htmlspecialchars($success) ?></div>
                 <?php elseif ($error): ?>
-                    <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
+                        <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
                 <?php endif; ?>
 
                 <form method="POST" enctype="multipart/form-data">
@@ -250,6 +285,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <input type="text" name="expertise_area" class="form-control"
                                 placeholder="e.g., Web Development, Data Science" required>
                         </div>
+
+                        <div class="col-12 mb-3">
+                            <label class="form-label fw-semibold">Demo Teaching Video</label>
+                            <input type="file" name="demo_video" class="form-control" accept="video/mp4" required>
+                            <small class="text-muted">Upload a demo video of minimum 10 minutes</small>
+                        </div>
+
 
                         <div class="col-12 mb-3">
                             <label class="form-label fw-semibold">Qualification (PDF only)</label>

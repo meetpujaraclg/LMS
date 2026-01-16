@@ -24,72 +24,76 @@ if (!$lessonId || !$courseId) {
     exit;
 }
 
-// clamp 0–100
+// Clamp percent to 0–100
 $percent = max(0, min(100, $percent));
 
-// threshold to consider lesson completed (same as MIN_WATCH_THRESHOLD * 100)
+// Threshold for video completion
 $COMPLETE_THRESHOLD = 90;  // 90%
 
 global $pdo;
 
-// 1) Read existing watched_percent for this user+lesson
-$oldStmt = $pdo->prepare("
-    SELECT watched_percent, completed 
-    FROM user_progress 
-    WHERE user_id = ? AND lesson_id = ?
-");
+// --- Fetch existing user progress ---
+$oldStmt = $pdo->prepare("SELECT watched_percent, completed, quiz_completed FROM user_progress WHERE user_id=? AND lesson_id=?");
 $oldStmt->execute([$userId, $lessonId]);
 $oldRow = $oldStmt->fetch(PDO::FETCH_ASSOC);
+
 $oldPercent = $oldRow ? (int) $oldRow['watched_percent'] : 0;
 $oldCompleted = $oldRow ? (int) $oldRow['completed'] : 0;
+$quizCompleted = $oldRow ? (int) $oldRow['quiz_completed'] : 0;
 
-// never go backwards for a lesson
-if ($percent < $oldPercent) {
+// Never decrease watched_percent
+if ($percent < $oldPercent)
     $percent = $oldPercent;
-}
 
-// mark completed when >= threshold, and never un-complete
-$newCompletedFlag = ($percent >= $COMPLETE_THRESHOLD || $oldCompleted === 1) ? 1 : 0;
+// Check if video is considered completed
+$videoCompleted = ($percent >= $COMPLETE_THRESHOLD || $oldCompleted === 1) ? 1 : 0;
 
-// 2) Insert or update user_progress, keeping max values
+// Lesson completed only if video + quiz are completed
+$lessonCompleted = ($videoCompleted && $quizCompleted) ? 1 : 0;
+
+// --- Insert / update user_progress ---
 $stmt = $pdo->prepare("
-    INSERT INTO user_progress (user_id, lesson_id, completed, completed_at, watched_percent)
-    VALUES (?, ?, ?, NOW(), ?)
-    ON DUPLICATE KEY UPDATE 
-        completed       = GREATEST(completed, VALUES(completed)),
-        completed_at    = IF(VALUES(completed)=1, NOW(), completed_at),
-        watched_percent = GREATEST(watched_percent, VALUES(watched_percent))
+    INSERT INTO user_progress (user_id, lesson_id, completed, completed_at, watched_percent, quiz_completed)
+    VALUES (?, ?, ?, IF(?=1, NOW(), NULL), ?, ?)
+    ON DUPLICATE KEY UPDATE
+        completed = GREATEST(completed, VALUES(completed)),
+        completed_at = IF(VALUES(completed)=1, NOW(), completed_at),
+        watched_percent = GREATEST(watched_percent, VALUES(watched_percent)),
+        quiz_completed = GREATEST(quiz_completed, VALUES(quiz_completed))
 ");
-$stmt->execute([$userId, $lessonId, $newCompletedFlag, $percent]);
+$stmt->execute([$userId, $lessonId, $lessonCompleted, $lessonCompleted, $percent, $quizCompleted]);
 
-// 3) Recalculate course-level progress (completed lessons / total)
-$totalStmt = $pdo->prepare("
+// --- Recalculate course progress (fully completed lessons only) ---
+$courseProgress = 0;
+$totalLessonsStmt = $pdo->prepare("
     SELECT COUNT(*) 
     FROM lessons l
     JOIN course_modules cm ON l.module_id = cm.id
     WHERE cm.course_id = ?
 ");
-$totalStmt->execute([$courseId]);
-$totalLessons = (int) $totalStmt->fetchColumn();
+$totalLessonsStmt->execute([$courseId]);
+$totalLessons = (int) $totalLessonsStmt->fetchColumn();
 
-$completedStmt = $pdo->prepare("
+$completedLessonsStmt = $pdo->prepare("
     SELECT COUNT(*) 
     FROM user_progress up
     JOIN lessons l ON up.lesson_id = l.id
     JOIN course_modules cm ON l.module_id = cm.id
-    WHERE up.user_id = ?
-      AND up.completed = 1
-      AND cm.course_id = ?
+    WHERE up.user_id=? AND up.completed=1 AND cm.course_id=?
 ");
-$completedStmt->execute([$userId, $courseId]);
-$completedLessons = (int) $completedStmt->fetchColumn();
+$completedLessonsStmt->execute([$userId, $courseId]);
+$completedLessons = (int) $completedLessonsStmt->fetchColumn();
 
-$courseProgress = $totalLessons > 0 ? (int) round($completedLessons * 100 / $totalLessons) : 0;
+if ($totalLessons > 0) {
+    $courseProgress = round($completedLessons * 100 / $totalLessons);
+}
 
-// 4) Response used by JS to update UI
+// --- JSON Response ---
 echo json_encode([
     'status' => 'success',
     'lesson_percent' => $percent,
-    'completed' => $newCompletedFlag,
+    'video_completed' => $videoCompleted,
+    'quiz_completed' => $quizCompleted,
+    'lesson_completed' => $lessonCompleted,
     'course_progress' => $courseProgress
 ]);
